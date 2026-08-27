@@ -20,8 +20,8 @@ Semaines A/B : si les exports couvrent plusieurs semaines, l'alternance est dét
 (cours différents entre semaines paires/impaires). L'étiquette "A"/"B" suit SEMAINE_A_REFERENCE
 (numéro ISO d'une semaine A officielle) ; à défaut, les semaines ISO impaires sont étiquetées "A".
 Rendu multi-semaines : chaque jour = 2 demi-colonnes « sem. A | sem. B » ; un cours identique toutes les
-semaines occupe les deux (cellule large, bleue), un cours différent selon la semaine est écrit côte à côte
-(deux cellules jaunes). Export d'une seule semaine : une colonne par jour, colonnes datées.
+semaines occupe les deux (cellule large), un cours différent selon la semaine est écrit côte à côte
+(deux cellules, même couleur). Export d'une seule semaine : une colonne par jour, colonnes datées.
 """
 
 import argparse
@@ -66,7 +66,7 @@ FICHIER_TOKEN = RACINE / "token.json"
 # Couleurs (Google Sheets : composantes 0..1)
 COULEUR_ENTETE = {"red": 0.85, "green": 0.85, "blue": 0.85}
 COULEUR_COURS = {"red": 0.85, "green": 0.91, "blue": 0.98}
-COULEUR_ALT = {"red": 1.0, "green": 0.95, "blue": 0.75}
+COULEUR_ALT = COULEUR_COURS   # cellules A/B : même bleu que les cours (ex. {"red": 1.0, "green": 0.95, "blue": 0.75} pour les distinguer en jaune)
 COULEUR_BORDURE = {"red": 0.6, "green": 0.6, "blue": 0.6}
 COULEUR_ABSENT = {"red": 0.98, "green": 0.85, "blue": 0.85}
 
@@ -494,9 +494,9 @@ h1{font-size:20px} h2{font-size:16px;margin-top:40px;border-top:2px solid #999;p
 table{border-collapse:collapse;margin:8px 0;table-layout:fixed;border-bottom:1px solid #999}
 td,th{border-left:1px solid #999;border-right:1px solid #999;border-top:1px solid #999;border-bottom:none;padding:2px 5px;vertical-align:middle;white-space:pre-line}
 tr.demi td{border-top:1px dotted #bbb} tr.grille{height:__HAUTEUR__px} tr.grille td{overflow:hidden}
-th{background:#ddd} th.entete_ab{background:#fff2bf;font-weight:normal;font-style:italic;font-size:10px}
+th{background:#ddd} th.entete_ab{background:#ddd;font-weight:normal;font-style:italic;font-size:10px}
 td.horaire{font-weight:bold;text-align:center;background:#f4f4f4}
-td.cours,td.cours_compact{background:#d9e8fa;text-align:center} td.alt,td.alt_petit,td.alt_compact{background:#fff2bf;text-align:center}
+td.cours,td.cours_compact{background:#d9e8fa;text-align:center} td.alt,td.alt_petit,td.alt_compact{background:#d9e8fa;text-align:center}
 td.alt{font-size:11px} td.alt_petit{font-size:9.5px}
 td.cours_compact,td.alt_compact{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px} td.alt_compact{font-size:9.5px}
 td.titre{font-weight:bold;font-size:14px;background:#eee}
@@ -580,7 +580,7 @@ FORMATS = {
     "titre": {"textFormat": {"bold": True, "fontSize": 13}, "verticalAlignment": "MIDDLE"},
     "sous_titre": {"wrapStrategy": "WRAP", "textFormat": {"italic": True, "fontSize": 9, "foregroundColor": {"red": 0.35, "green": 0.35, "blue": 0.35}}, "verticalAlignment": "MIDDLE"},
     "entete": {"textFormat": {"bold": True, "fontSize": 10}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "backgroundColor": COULEUR_ENTETE},
-    "entete_ab": {"textFormat": {"italic": True, "fontSize": 8}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "backgroundColor": COULEUR_ALT},
+    "entete_ab": {"textFormat": {"italic": True, "fontSize": 8}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "backgroundColor": COULEUR_ENTETE},
     "horaire": {"textFormat": {"bold": True, "fontSize": 9}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE"},
     "cours": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 9}, "backgroundColor": COULEUR_COURS},
     # demi-colonnes A/B (multi-semaines) : police réduite ; "alt_petit" quand le texte ne tiendrait pas
@@ -779,8 +779,8 @@ def main():
         if hors_grille:
             sous_titre += f" · ⚠ {len(hors_grille)} cours hors jours affichés"
         if scinder_ab:
-            sous_titre += ("\nLecture : cellule bleue sur toute la largeur du jour = cours identique toutes les semaines ; "
-                           "cellules jaunes côte à côte = cours différent en semaine A (gauche) et en semaine B (droite).")
+            sous_titre += ("\nLecture : cellule sur toute la largeur du jour = cours identique toutes les semaines ; "
+                           "deux cellules côte à côte = cours différent en semaine A (gauche) et en semaine B (droite).")
         o = construire_onglet(e["ics"]["libelle"], sous_titre, grille, h_min, h_max, dates_jours, scinder_ab)
         o["lignes"][0][0] = titre
         o["largeurs"] = [(0, 1, LARGEUR_COL_HORAIRE), (1, o["nb_cols"], LARGEUR_DEMI_COL_JOUR if scinder_ab else LARGEUR_COL_JOUR)]

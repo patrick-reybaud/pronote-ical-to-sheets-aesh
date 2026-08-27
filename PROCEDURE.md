@@ -188,11 +188,11 @@ python generer_edt.py --annee 2026-2027 --google --nom "EDT_Eleves_AESH_2026-202
   En bas, le calendrier ProNote des journées entières (fériés, vacances) si présent dans les exports.
 - Onglets élèves : titre = `NOM Prénom — classe — aide humaine : <type> <heures> h`, sous-titre = date de naissance,
   dates de notification, besoins, fichier source, date de génération et légende de lecture.
-- Export **multi-semaines** : chaque jour est divisé en deux demi-colonnes **« sem. A | sem. B »** (sous-en-tête jaune).
-  Une cellule **bleue** sur toute la largeur du jour = cours identique toutes les semaines ; deux cellules **jaunes**
-  côte à côte = cours différent en semaine A (gauche) et en semaine B (droite). Le texte des cellules jaunes est en
+- Export **multi-semaines** : chaque jour est divisé en deux demi-colonnes **« sem. A | sem. B »** (sous-en-tête).
+  Une cellule sur toute la largeur du jour = cours identique toutes les semaines ; deux cellules
+  côte à côte = cours différent en semaine A (gauche) et en semaine B (droite). Toutes les cellules sont bleues ; le texte des demi-cellules A/B est en
   police 8 (7 si nécessaire) : « matière » puis « prof · salle (groupe) ».
-- Export d'**une seule semaine** : une colonne par jour, colonnes datées, cellules bleues uniquement.
+- Export d'**une seule semaine** : une colonne par jour, colonnes datées, pas de demi-colonnes A/B.
 - Les lignes d'en-tête (4 en multi-semaines, 3 sinon) sont figées ; les colonnes ne le sont pas (limitation Google
   avec le titre fusionné).
 
