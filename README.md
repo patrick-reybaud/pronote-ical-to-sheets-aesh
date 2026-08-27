@@ -107,7 +107,9 @@ les `.ics` qu'il contient (sous-dossiers compris). La procédure complète est d
    Cellule = matière / professeur / salle (groupe). Plage : 7h → 19h, étendue automatiquement (jusqu'à 24h)
    pour les élèves ayant des services du soir (restauration).
 4. **Semaines A/B** : si les exports couvrent plusieurs semaines, l'alternance est détectée par créneau
-   (cours différents entre semaines paires/impaires) et affichée « Sem. A : … / Sem. B : … » sur fond jaune.
+   (cours différents entre semaines paires/impaires). Chaque jour est alors divisé en deux demi-colonnes
+   « sem. A | sem. B » : un cours identique toutes les semaines occupe les deux (cellule bleue), un cours différent
+   selon la semaine est affiché côte à côte (deux cellules jaunes, A à gauche, B à droite).
    L'étiquette A/B suit `SEMAINE_A_REFERENCE` (n° ISO d'une semaine A officielle) dans `generer_edt.py` ;
    à défaut les semaines ISO impaires sont « A ». **L'ICS ProNote ne contient pas l'information A/B.**
    Avec un export d'une seule semaine, la grille est celle de cette semaine (pas d'alternance possible).
@@ -134,7 +136,9 @@ les `.ics` qu'il contient (sous-dossiers compris). La procédure complète est d
 | `PAS_MINUTES` | résolution interne | 30 |
 | `SEMAINE_A_REFERENCE` | n° ISO d'une semaine « A » officielle | `None` (impaires = A) |
 | `SEUIL_RELATIF` | multi-semaines : part des semaines où un cours doit apparaître pour être retenu | 0.5 |
-| `HAUTEUR_DEMI_LIGNE` | hauteur (px) d'une demi-ligne de la grille (1 h = 2 demi-lignes) | 26 |
+| `HAUTEUR_DEMI_LIGNE` | hauteur (px) d'une demi-ligne de la grille (1 h = 2 demi-lignes) | 28 |
+| `LARGEUR_DEMI_COL_JOUR` | largeur (px) d'une demi-colonne « sem. A » / « sem. B » (multi-semaines) | 135 |
+| `TAILLE_POLICE_ALT` | taille de police des cellules jaunes A/B (réduite de 1 si le texte ne tient pas) | 8 |
 | `COULEUR_*`, `LARGEUR_COL_*` | mise en forme du Google Sheet | — |
 
 ## Dépendances

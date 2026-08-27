@@ -19,6 +19,9 @@ Usage :
 Semaines A/B : si les exports couvrent plusieurs semaines, l'alternance est détectée automatiquement
 (cours différents entre semaines paires/impaires). L'étiquette "A"/"B" suit SEMAINE_A_REFERENCE
 (numéro ISO d'une semaine A officielle) ; à défaut, les semaines ISO impaires sont étiquetées "A".
+Rendu multi-semaines : chaque jour = 2 demi-colonnes « sem. A | sem. B » ; un cours identique toutes les
+semaines occupe les deux (cellule large, bleue), un cours différent selon la semaine est écrit côte à côte
+(deux cellules jaunes). Export d'une seule semaine : une colonne par jour, colonnes datées.
 """
 
 import argparse
@@ -68,8 +71,11 @@ COULEUR_BORDURE = {"red": 0.6, "green": 0.6, "blue": 0.6}
 COULEUR_ABSENT = {"red": 0.98, "green": 0.85, "blue": 0.85}
 
 LARGEUR_COL_HORAIRE = 110
-LARGEUR_COL_JOUR = 210
-HAUTEUR_DEMI_LIGNE = 26   # hauteur (px) d'une demi-ligne dans Google Sheets / l'aperçu HTML → 1 h = 52 px
+LARGEUR_COL_JOUR = 210        # export d'une seule semaine : 1 colonne par jour
+LARGEUR_DEMI_COL_JOUR = 135   # multi-semaines : 2 demi-colonnes par jour (sem. A | sem. B) → 270 px par jour
+HAUTEUR_DEMI_LIGNE = 28       # hauteur (px) d'une demi-ligne dans Google Sheets / l'aperçu HTML → 1 h = 56 px
+HAUTEUR_LIGNE_SOUS_TITRE = 34 # 2 lignes de texte (infos élève + légende)
+TAILLE_POLICE_ALT = 8         # demi-colonnes A/B ; ramenée à 7 si le texte ne tient pas (estimation)
 
 NB_LIGNES_ENTETE = 3  # titre, sous-titre, en-tête des colonnes
 
@@ -356,15 +362,35 @@ def construire_grille(cours, h_min, h_max, lundi_reference):
     return grille, semaines, hors_grille
 
 
+def compacter_texte(texte):
+    return texte.replace("\n", " · ")
+
+
 def texte_contenu(contenu, compact=False):
-    """Texte d'une cellule ; compact = bloc d'une seule demi-ligne → tout sur une ligne."""
+    """Texte d'une cellule (une colonne par jour) ; compact = bloc d'une seule demi-ligne → tout sur une ligne."""
     if contenu is None:
         return ""
     if contenu[0] == "T":
-        return contenu[1].replace("\n", " · ") if compact else contenu[1]
+        return compacter_texte(contenu[1]) if compact else contenu[1]
     if compact:
-        return f"A : {contenu[1].replace(chr(10), ' · ')} | B : {contenu[2].replace(chr(10), ' · ')}"
+        return f"A : {compacter_texte(contenu[1])} | B : {compacter_texte(contenu[2])}"
     return f"Sem. A : {contenu[1]}\n— — —\nSem. B : {contenu[2]}"
+
+
+def texte_demi_colonne(texte, compact=False):
+    """Texte d'une demi-colonne A ou B (plus dense) : matière sur sa ligne, puis « prof · salle (groupe) »."""
+    lignes = texte.split("\n")
+    if compact:
+        return " · ".join(lignes)
+    return "\n".join([lignes[0]] + ([" · ".join(lignes[1:])] if len(lignes) > 1 else []))
+
+
+def texte_tient(texte, taille_police, largeur_px, hauteur_px):
+    """Estimation grossière (rendu Google Sheets) : le texte replié tient-il dans une cellule largeur × hauteur ?"""
+    px = taille_police * 1.33                 # points → pixels
+    largeur_char, interligne = px * 0.62, px * 1.22
+    nb_lignes = sum(max(1, math.ceil(len(l) * largeur_char / max(1, largeur_px - 6))) for l in texte.split("\n"))
+    return nb_lignes * interligne <= hauteur_px - 4
 
 
 def style_contenu(contenu, compact=False):
@@ -374,28 +400,42 @@ def style_contenu(contenu, compact=False):
     return f"{base}_compact" if compact else base
 
 
-def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
+def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours, scinder_ab=False):
     """
     Modèle d'un onglet : lignes (textes), fusions (r0, r1, c0, c1 — fin exclue), styles {(r, c): style},
-    lignes_demi (lignes dont le bord supérieur est une demi-heure → trait pointillé).
+    lignes_demi (lignes dont le bord supérieur est une demi-heure → trait pointillé), premiere_grille (index de
+    la première ligne de la grille horaire).
     Quadrillage à l'heure : l'étiquette "8h - 9h" est fusionnée sur les 2 demi-lignes de l'heure ;
     granularité demi-heure : chaque heure = 2 lignes. Les cellules identiques consécutives d'une colonne
     sont fusionnées en un bloc (comme ProNote) ; un bloc d'une seule demi-ligne est écrit en compact.
+    scinder_ab : chaque jour = 2 demi-colonnes « sem. A | sem. B » (sous-en-tête) ; un cours identique toutes les
+    semaines est fusionné sur les deux, un cours différent selon la semaine est écrit côte à côte (A à gauche, B à droite).
     """
     nb_jours = len(JOURS)
-    nb_cols = nb_jours + 1
+    sous_cols = 2 if scinder_ab else 1
+    nb_cols = 1 + nb_jours * sous_cols
     lignes, fusions, styles, lignes_demi = [], [], {}, []
 
-    lignes.append([titre] + [""] * nb_jours)
+    lignes.append([titre] + [""] * (nb_cols - 1))
     fusions.append((0, 1, 0, nb_cols))
     styles[(0, 0)] = "titre"
-    lignes.append([sous_titre] + [""] * nb_jours)
+    lignes.append([sous_titre] + [""] * (nb_cols - 1))
     fusions.append((1, 2, 0, nb_cols))
     styles[(1, 0)] = "sous_titre"
-    entete = ["Horaires"] + [f"{JOURS[j]}{' ' + dates_jours[j] if dates_jours.get(j) else ''}" for j in range(nb_jours)]
+    entete = ["Horaires"] + [""] * (nb_cols - 1)
+    for j in range(nb_jours):
+        entete[1 + j * sous_cols] = f"{JOURS[j]}{' ' + dates_jours[j] if dates_jours.get(j) else ''}"
+        if sous_cols > 1:
+            fusions.append((2, 3, 1 + j * sous_cols, 1 + (j + 1) * sous_cols))
     lignes.append(entete)
     for c in range(nb_cols):
         styles[(2, c)] = "entete"
+    if scinder_ab:  # sous-en-tête « sem. A | sem. B » sous chaque jour ; « Horaires » fusionné sur les 2 lignes
+        lignes.append([""] + ["sem. A", "sem. B"] * nb_jours)
+        fusions.append((2, 4, 0, 1))
+        styles[(3, 0)] = "entete"
+        for c in range(1, nb_cols):
+            styles[(3, c)] = "entete_ab"
 
     sous_pas = 60 // PAS_MINUTES  # demi-lignes par heure
     premiere = len(lignes)
@@ -404,10 +444,10 @@ def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
         r = len(lignes)
         for k in range(sous_pas):
             s = (h - h_min) * sous_pas + k
-            lignes.append([f"{h}h - {h + 1}h" if k == 0 else ""] + [""] * nb_jours)
+            lignes.append([f"{h}h - {h + 1}h" if k == 0 else ""] + [""] * (nb_cols - 1))
             styles[(r + k, 0)] = "horaire"
-            for j in range(nb_jours):
-                styles[(r + k, j + 1)] = "vide"
+            for c in range(1, nb_cols):
+                styles[(r + k, c)] = "vide"
             if k > 0:
                 lignes_demi.append(r + k)
             contenus.append([grille.get((j, s)) for j in range(nb_jours)])
@@ -415,6 +455,7 @@ def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
 
     # Blocs verticaux par jour
     for j in range(nb_jours):
+        c0 = 1 + j * sous_cols
         r = 0
         while r < len(contenus):
             contenu = contenus[r][j]
@@ -423,13 +464,26 @@ def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
                 fin += 1
             if contenu is not None:
                 compact = (fin - r) == 1
-                lignes[premiere + r][j + 1] = texte_contenu(contenu, compact)
-                styles[(premiere + r, j + 1)] = style_contenu(contenu, compact)
-                if not compact:
-                    fusions.append((premiere + r, premiere + fin, j + 1, j + 2))
+                r0, r1 = premiere + r, premiere + fin
+                if scinder_ab and contenu[0] == "ALT":
+                    # Cours différent selon la semaine : demi-colonne A | demi-colonne B, côte à côte
+                    hauteur = (fin - r) * HAUTEUR_DEMI_LIGNE
+                    for k in (0, 1):
+                        texte = texte_demi_colonne(contenu[1 + k], compact)
+                        lignes[r0][c0 + k] = texte
+                        if compact:
+                            styles[(r0, c0 + k)] = "alt_compact"
+                        else:
+                            styles[(r0, c0 + k)] = "alt" if texte_tient(texte, TAILLE_POLICE_ALT, LARGEUR_DEMI_COL_JOUR, hauteur) else "alt_petit"
+                            fusions.append((r0, r1, c0 + k, c0 + k + 1))
+                else:
+                    lignes[r0][c0] = texte_contenu(contenu, compact)
+                    styles[(r0, c0)] = style_contenu(contenu, compact)
+                    if not compact or sous_cols > 1:
+                        fusions.append((r0, r1, c0, c0 + sous_cols))
             r = fin
     return {"titre": titre, "lignes": lignes, "fusions": fusions, "styles": styles, "nb_cols": nb_cols,
-            "lignes_demi": lignes_demi, "hauteur_ligne": HAUTEUR_DEMI_LIGNE}
+            "lignes_demi": lignes_demi, "hauteur_ligne": HAUTEUR_DEMI_LIGNE, "premiere_grille": premiere}
 
 
 # ───────────────────────────── Rendu HTML (aperçu local) ─────────────────────────────
@@ -440,10 +494,12 @@ h1{font-size:20px} h2{font-size:16px;margin-top:40px;border-top:2px solid #999;p
 table{border-collapse:collapse;margin:8px 0;table-layout:fixed;border-bottom:1px solid #999}
 td,th{border-left:1px solid #999;border-right:1px solid #999;border-top:1px solid #999;border-bottom:none;padding:2px 5px;vertical-align:middle;white-space:pre-line}
 tr.demi td{border-top:1px dotted #bbb} tr.grille{height:__HAUTEUR__px} tr.grille td{overflow:hidden}
-th{background:#ddd} td.horaire{font-weight:bold;text-align:center;background:#f4f4f4;width:90px}
-td.cours,td.cours_compact{background:#d9e8fa;width:200px;text-align:center} td.alt,td.alt_compact{background:#fff2bf;width:200px;text-align:center}
-td.cours_compact,td.alt_compact{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;font-size:11px}
-td.vide{width:200px} td.titre{font-weight:bold;font-size:14px;background:#eee}
+th{background:#ddd} th.entete_ab{background:#fff2bf;font-weight:normal;font-style:italic;font-size:10px}
+td.horaire{font-weight:bold;text-align:center;background:#f4f4f4}
+td.cours,td.cours_compact{background:#d9e8fa;text-align:center} td.alt,td.alt_petit,td.alt_compact{background:#fff2bf;text-align:center}
+td.alt{font-size:11px} td.alt_petit{font-size:9.5px}
+td.cours_compact,td.alt_compact{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px} td.alt_compact{font-size:9.5px}
+td.titre{font-weight:bold;font-size:14px;background:#eee}
 td.sous_titre{color:#555;background:#eee} td.absent{background:#fadada} .nav a{margin-right:12px}
 """
 
@@ -456,7 +512,14 @@ def rendre_html(onglets, titre_document):
         parties.append(f"<a href='#o{i}'>{html.escape(o['titre'])}</a> ")
     parties.append("</p>")
     for i, o in enumerate(onglets):
-        parties.append(f"<h2 id='o{i}'>{html.escape(o['titre'])}</h2><table>")
+        largeurs = {}
+        for (c0, c1, largeur) in o.get("largeurs", []):
+            for c in range(c0, c1):
+                largeurs[c] = largeur
+        colonnes = [largeurs.get(c, 120) for c in range(o["nb_cols"])]
+        parties.append(f"<h2 id='o{i}'>{html.escape(o['titre'])}</h2><table style='width:{sum(colonnes)}px'><colgroup>"
+                       + "".join(f"<col style='width:{l}px'>" for l in colonnes) + "</colgroup>")
+        premiere_grille = o.get("premiere_grille", NB_LIGNES_ENTETE)
         couvertes, spans = set(), {}
         for (r0, r1, c0, c1) in o["fusions"]:
             spans[(r0, c0)] = (r1 - r0, c1 - c0)
@@ -467,7 +530,7 @@ def rendre_html(onglets, titre_document):
         demi = set(o.get("lignes_demi", []))
         for r, ligne in enumerate(o["lignes"]):
             classe_tr = ""
-            if o.get("hauteur_ligne") and r >= NB_LIGNES_ENTETE:
+            if o.get("hauteur_ligne") and r >= premiere_grille:
                 classe_tr = " class='grille demi'" if r in demi else " class='grille'"
             parties.append(f"<tr{classe_tr}>")
             for c in range(o["nb_cols"]):
@@ -477,7 +540,7 @@ def rendre_html(onglets, titre_document):
                 style = o["styles"].get((r, c), "")
                 rs, cs = spans.get((r, c), (1, 1))
                 attrs = (f" rowspan='{rs}'" if rs > 1 else "") + (f" colspan='{cs}'" if cs > 1 else "")
-                balise = "th" if style == "entete" else "td"
+                balise = "th" if style in ("entete", "entete_ab") else "td"
                 parties.append(f"<{balise} class='{style}'{attrs}>{texte}</{balise}>")
             parties.append("</tr>")
         parties.append("</table>")
@@ -515,16 +578,19 @@ def authentifier_google():
 FORMATS = {
     "base": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "textFormat": {"fontSize": 9}},
     "titre": {"textFormat": {"bold": True, "fontSize": 13}, "verticalAlignment": "MIDDLE"},
-    "sous_titre": {"textFormat": {"italic": True, "fontSize": 9, "foregroundColor": {"red": 0.35, "green": 0.35, "blue": 0.35}}, "verticalAlignment": "MIDDLE"},
+    "sous_titre": {"wrapStrategy": "WRAP", "textFormat": {"italic": True, "fontSize": 9, "foregroundColor": {"red": 0.35, "green": 0.35, "blue": 0.35}}, "verticalAlignment": "MIDDLE"},
     "entete": {"textFormat": {"bold": True, "fontSize": 10}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "backgroundColor": COULEUR_ENTETE},
+    "entete_ab": {"textFormat": {"italic": True, "fontSize": 8}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "backgroundColor": COULEUR_ALT},
     "horaire": {"textFormat": {"bold": True, "fontSize": 9}, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE"},
     "cours": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 9}, "backgroundColor": COULEUR_COURS},
-    "alt": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 9}, "backgroundColor": COULEUR_ALT},
+    # demi-colonnes A/B (multi-semaines) : police réduite ; "alt_petit" quand le texte ne tiendrait pas
+    "alt": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": TAILLE_POLICE_ALT}, "backgroundColor": COULEUR_ALT},
+    "alt_petit": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": TAILLE_POLICE_ALT - 1}, "backgroundColor": COULEUR_ALT},
     "vide": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "textFormat": {"fontSize": 9}},
     "absent": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "textFormat": {"fontSize": 9}, "backgroundColor": COULEUR_ABSENT},
     # blocs d'une seule demi-ligne : une ligne de texte, coupée si trop longue (pas de retour à la ligne)
     "cours_compact": {"wrapStrategy": "CLIP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 8}, "backgroundColor": COULEUR_COURS},
-    "alt_compact": {"wrapStrategy": "CLIP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 8}, "backgroundColor": COULEUR_ALT},
+    "alt_compact": {"wrapStrategy": "CLIP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": TAILLE_POLICE_ALT - 1}, "backgroundColor": COULEUR_ALT},
 }
 
 
@@ -566,8 +632,11 @@ def requetes_onglet(sheet_id, onglet, largeurs, lignes_figees):
             reqs.append({"updateBorders": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1,
                                                      "startColumnIndex": 0, "endColumnIndex": nb_cols}, "top": pointille}})
     if onglet.get("hauteur_ligne"):
-        reqs.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": NB_LIGNES_ENTETE, "endIndex": len(lignes)},
+        reqs.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": onglet.get("premiere_grille", NB_LIGNES_ENTETE), "endIndex": len(lignes)},
                                                    "properties": {"pixelSize": onglet["hauteur_ligne"]}, "fields": "pixelSize"}})
+    if onglet.get("hauteur_sous_titre"):
+        reqs.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
+                                                   "properties": {"pixelSize": onglet["hauteur_sous_titre"]}, "fields": "pixelSize"}})
     if lignes_figees:
         # Lignes d'en-tête figées uniquement : figer une colonne est refusé par Google car le titre est fusionné sur toute la largeur
         reqs.append({"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": lignes_figees}},
@@ -686,7 +755,8 @@ def main():
     else:
         print(f"   Alternance A/B : semaine A de référence = ISO {SEMAINE_A_REFERENCE or '35 (impaires = A, par défaut)'}")
 
-    # ── Construction des onglets
+    # ── Construction des onglets (plusieurs semaines → demi-colonnes « sem. A | sem. B » par jour)
+    scinder_ab = len(lundis) > 1
     onglets = []
     date_gen = datetime.now().strftime("%d/%m/%Y %H:%M")
     for e in resultats:
@@ -708,11 +778,16 @@ def main():
                       + f" · source ProNote : {e['ics']['chemin'].name} ({infos_sem}, {len(e['cours'])} cours) · généré le {date_gen}")
         if hors_grille:
             sous_titre += f" · ⚠ {len(hors_grille)} cours hors jours affichés"
-        o = construire_onglet(e["ics"]["libelle"], sous_titre, grille, h_min, h_max, dates_jours)
+        if scinder_ab:
+            sous_titre += ("\nLecture : cellule bleue sur toute la largeur du jour = cours identique toutes les semaines ; "
+                           "cellules jaunes côte à côte = cours différent en semaine A (gauche) et en semaine B (droite).")
+        o = construire_onglet(e["ics"]["libelle"], sous_titre, grille, h_min, h_max, dates_jours, scinder_ab)
         o["lignes"][0][0] = titre
-        o["largeurs"] = [(0, 1, LARGEUR_COL_HORAIRE), (1, o["nb_cols"], LARGEUR_COL_JOUR)]
+        o["largeurs"] = [(0, 1, LARGEUR_COL_HORAIRE), (1, o["nb_cols"], LARGEUR_DEMI_COL_JOUR if scinder_ab else LARGEUR_COL_JOUR)]
         o["bordures"] = 2
-        o["figees"] = NB_LIGNES_ENTETE
+        o["figees"] = o["premiere_grille"]
+        if scinder_ab:
+            o["hauteur_sous_titre"] = HAUTEUR_LIGNE_SOUS_TITRE
         onglets.append(o)
         e["nb_lignes"] = len(o["lignes"])
 

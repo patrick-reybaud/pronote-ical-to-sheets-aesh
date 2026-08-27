@@ -95,12 +95,16 @@ toute ambiguïté.
 
 - Un fichier par élève, nommé par ProNote **`Calendrier_NOM_Prenom_JJMMAAAA.ics`** (`JJMMAAAA` = date de naissance).
   Conserver les noms générés par ProNote : les noms composés avec `_` sont gérés (le prénom est le dernier segment).
-- Les déposer dans un sous-dossier du dossier d'année, ex. `2026-2027/EDT_élèves 2026-2027/` (les sous-dossiers
+- Les déposer dans un sous-dossier du dossier d'année, ex. `2026-2027/EDT_élèves_2026_2027/` (les sous-dossiers
   sont parcourus récursivement).
 - L'export de **tout l'établissement** est accepté : seuls les élèves présents dans l'ODS sont traités. Les fichiers
   dont le nom ne suit pas la convention sont comptés comme « non reconnus » dans la console.
-- Pour détecter l'alternance **semaines A/B**, l'export doit couvrir **plusieurs semaines** (idéalement un
-  trimestre ou l'année). Un export sur une seule semaine donne l'emploi du temps de cette semaine, sans A/B.
+- **Période d'export : au moins 4 semaines consécutives de cours normaux** (2 semaines A + 2 semaines B), en
+  **évitant la semaine de rentrée** — ex. S37 → S40 (07/09 → 02/10/2026). ProNote exporte chaque cours comme un
+  événement daté (pas de récurrence) : le script ne peut afficher que ce qui a été exporté. Un export sur **une seule
+  semaine** donne l'emploi du temps de cette semaine-là, colonnes datées, sans A/B — et si c'est la semaine de rentrée,
+  le lundi est vide et les classes qui rentrent plus tard n'ont aucun cours. Avec plusieurs semaines, l'alternance
+  **A/B** est détectée automatiquement (cours présent dans ≥ 50 % des semaines de sa parité).
 - L'export iCal par élève est réalisé côté établissement dans ProNote (profil administration / vie scolaire).
   *À compléter si besoin : chemin de menu exact utilisé dans votre établissement.*
 
@@ -129,13 +133,14 @@ Lire la console :
 ```
 📋 Notifications : Notif_….ods (onglet 'Besoins_élèves')
    24 élève(s) à traiter
-📁 2026-2027/EDT_élèves 2026-2027 : 622 fichier(s) ICS
+📁 2026-2027/EDT_élèves_2026_2027 : 753 fichier(s) ICS
 🔗 Appariement élèves ↔ fichiers ICS
   ✓ NOM Prénom        12/05/2009 → Calendrier_NOM_Prenom_12052009.ics   28 cours  (date de naissance + nom)
   ✗ NOM Prénom        01/01/2010 → —                                      0 cours  (aucun fichier ICS correspondant)
 🕒 Grille 7h → 19h (étendue jusqu'à 24h pour les élèves concernés)
-📅 Semaine(s) couverte(s) par les exports : S36 (31/08 → 06/09/2026)
-   ⚠ Une seule semaine exportée : pas de détection d'alternance A/B possible
+📅 Semaine(s) couverte(s) par les exports : S37 (07/09 → 13/09/2026), S38 (14/09 → 20/09/2026), S39 (…), S40 (…)
+   Alternance A/B : semaine A de référence = ISO 35 (impaires = A, par défaut)
+   (ou « ⚠ Une seule semaine exportée : pas de détection d'alternance A/B possible » si l'export ne couvre qu'une semaine)
 💾 Aperçu local : 2026-2027/sorties/EDT_Eleves_AESH_2026-2027_<horodatage>.html
 💾 Appariement : 2026-2027/sorties/EDT_Eleves_AESH_2026-2027_<horodatage>_appariement.csv
 ```
@@ -182,9 +187,14 @@ python generer_edt.py --annee 2026-2027 --google --nom "EDT_Eleves_AESH_2026-202
 - Onglet **Récap** : une ligne par élève de l'ODS ; les lignes **rouges** = élèves sans emploi du temps.
   En bas, le calendrier ProNote des journées entières (fériés, vacances) si présent dans les exports.
 - Onglets élèves : titre = `NOM Prénom — classe — aide humaine : <type> <heures> h`, sous-titre = date de naissance,
-  dates de notification, besoins, fichier source et date de génération.
-- Cellules **bleues** = cours, **jaunes** = alternance « Sem. A : … / Sem. B : … ».
-- Les 3 lignes d'en-tête sont figées ; les colonnes ne le sont pas (limitation Google avec le titre fusionné).
+  dates de notification, besoins, fichier source, date de génération et légende de lecture.
+- Export **multi-semaines** : chaque jour est divisé en deux demi-colonnes **« sem. A | sem. B »** (sous-en-tête jaune).
+  Une cellule **bleue** sur toute la largeur du jour = cours identique toutes les semaines ; deux cellules **jaunes**
+  côte à côte = cours différent en semaine A (gauche) et en semaine B (droite). Le texte des cellules jaunes est en
+  police 8 (7 si nécessaire) : « matière » puis « prof · salle (groupe) ».
+- Export d'**une seule semaine** : une colonne par jour, colonnes datées, cellules bleues uniquement.
+- Les lignes d'en-tête (4 en multi-semaines, 3 sinon) sont figées ; les colonnes ne le sont pas (limitation Google
+  avec le titre fusionné).
 
 ---
 
@@ -211,7 +221,7 @@ Le script **crée un nouveau classeur à chaque exécution** ; il ne met pas à 
 | `Colonnes NOM/Date naissance introuvables` | première ligne de l'onglet ≠ en-têtes attendus | vérifier le nom de l'onglet (`Besoins_élèves`) et les intitulés de colonnes (§ 2.2) |
 | Élève `✗` dans la console | date de naissance ou nom incohérents entre l'ODS et le nom du fichier ICS, ou export manquant | voir tableau § 3.1 |
 | `… nom(s) non reconnus` | fichiers `.ics` ne suivant pas `Calendrier_NOM_Prenom_JJMMAAAA.ics` | renommer selon la convention |
-| `⚠ Une seule semaine exportée` | export ProNote sur une seule semaine | normal ; refaire un export multi-semaines pour obtenir l'alternance A/B |
+| `⚠ Une seule semaine exportée` | export ProNote sur une seule semaine | normal ; refaire un export sur ≥ 4 semaines hors rentrée (§ 2.3) pour obtenir la semaine type et l'alternance A/B |
 | Étiquettes A/B inversées | calendrier A/B de l'établissement non aligné sur la parité ISO | renseigner `SEMAINE_A_REFERENCE` (§ 2.4) |
 | `⚠ N cours hors jours affichés` dans le sous-titre | cours le samedi (ou dimanche) | ajouter `"Samedi"` à `JOURS` |
 | Erreur Google `429` / quota | trop d'appels API (rare : ~6 appels par exécution) | attendre une minute et relancer |
@@ -233,6 +243,6 @@ Le script **crée un nouveau classeur à chaque exécution** ; il ne met pas à 
 - [ ] `credentials_oauth.json` présent ; `python auth_google.py` → `✓ Accès API OK`
 - [ ] Dossier `AAAA-AAAA/` créé, `ANNEE_DEFAUT` à jour
 - [ ] ODS déposé, onglet `Besoins_élèves`, dates de naissance au format `JJ/MM/AAAA`
-- [ ] Exports `.ics` déposés (plusieurs semaines si possible), `SEMAINE_A_REFERENCE` renseigné si connu
+- [ ] Exports `.ics` déposés (≥ 4 semaines consécutives hors semaine de rentrée), `SEMAINE_A_REFERENCE` renseigné si connu
 - [ ] `python generer_edt.py` → tous les élèves `✓` (ou absences justifiées), aperçu HTML contrôlé
 - [ ] `python generer_edt.py --google --partager …` → URL notée, classeur vérifié, destinataires prévenus
