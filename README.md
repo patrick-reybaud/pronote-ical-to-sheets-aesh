@@ -1,18 +1,37 @@
-# Export_ics2sheet — Emplois du temps des élèves notifiés (suivi AESH)
+# pronote-ical-to-sheets-aesh
 
-**Exports ProNote (`.ics`) + fichier de notifications (`.ods`) → Google Sheets**
-
-Génère, pour chaque élève listé dans le fichier de notifications (`Notif_*.ods`, onglet `Besoins_élèves`),
-un emploi du temps hebdomadaire au format ProNote (grille par heure, cellule divisée en cas de demi-heure)
-à partir des exports ProNote `.ics`, puis crée un Google Sheet : onglet **Récap** + un onglet par élève.
-
-Finalité : fournir à la coordination AESH les emplois du temps des élèves accompagnés, qui servent de base
-à la construction des emplois du temps des AESH.
+**Emplois du temps des élèves notifiés (suivi AESH) — exports ProNote iCal (`.ics`) + fichier de notifications (`.ods`) → Google Sheets**
 
 | Document | Contenu |
 |---|---|
 | 📘 [PROCEDURE.md](PROCEDURE.md) | Procédure pas à pas : installation, préparation d'une année scolaire, génération, contrôles, dépannage |
 | 🔑 [GUIDE_OAUTH2.md](GUIDE_OAUTH2.md) | Création du client OAuth2 dans Google Cloud (à faire une seule fois) |
+
+## À quoi sert ce programme ?
+
+Dans un établissement scolaire, les élèves en situation de handicap qui bénéficient d'une **notification d'aide
+humaine** (MDPH) sont accompagnés par des **AESH** (accompagnants d'élèves en situation de handicap). La personne qui
+coordonne les AESH (coordonnateur·rice de PIAL, référent·e handicap, direction…) doit construire l'emploi du temps de
+chaque AESH à partir des emplois du temps des élèves accompagnés, en tenant compte du volume d'heures notifié et du
+type d'aide (individuelle, mutualisée ou collective).
+
+Le problème : ProNote fournit ces emplois du temps **un par un**, sous forme d'export iCal par élève, dans un format
+« calendrier » peu lisible et difficile à partager ; les recopier à la main pour 20 à 30 élèves à chaque rentrée — et à
+chaque changement d'emploi du temps — est long et source d'erreurs.
+
+Ce programme automatise toute la chaîne :
+
+1. il lit la **liste des élèves notifiés** dans le fichier de suivi `.ods` (identité, classe, type d'aide, quotité
+   horaire, dates de notification, besoins) ;
+2. il retrouve, pour chacun, son **export ProNote `.ics`** — même au milieu d'un export de tout l'établissement —
+   en s'appuyant sur la date de naissance et le nom (tolérant aux fautes de frappe) ;
+3. il reconstruit un **emploi du temps hebdomadaire lisible**, dans la même présentation que ProNote (grille horaire,
+   demi-heures, semaines A/B), avec matière, professeur et salle ;
+4. il publie le tout dans **un Google Sheet partageable** : un onglet **Récap** (quels élèves ont un emploi du temps,
+   lesquels n'en ont pas, quotités, besoins, calendrier des vacances) et **un onglet par élève**.
+
+Résultat : en quelques minutes, la coordination AESH dispose d'un document unique, à jour et partageable avec
+l'équipe, pour construire puis ajuster les emplois du temps des accompagnants.
 
 ## ⚠️ Données personnelles
 
@@ -26,7 +45,7 @@ qui s'authentifie : partager uniquement avec les personnes habilitées.
 ## Arborescence
 
 ```
-Export_ics2sheet/
+pronote-ical-to-sheets-aesh/
 ├── generer_edt.py              # script principal (lecture ODS + ICS, appariement, grille, HTML, Google Sheets)
 ├── auth_google.py              # (ré)authentification Google, à lancer dans un terminal
 ├── requirements.txt            # dépendances Python (versions figées)
@@ -48,8 +67,8 @@ Export_ics2sheet/
 ## Installation
 
 ```bash
-git clone git@github.com:patrick-reybaud/Export_ics2sheet.git
-cd Export_ics2sheet
+git clone git@github.com:patrick-reybaud/pronote-ical-to-sheets-aesh.git
+cd pronote-ical-to-sheets-aesh
 python3 -m venv venv                 # Python 3.11 recommandé
 source venv/bin/activate
 pip install -r requirements.txt
@@ -115,6 +134,7 @@ les `.ics` qu'il contient (sous-dossiers compris). La procédure complète est d
 | `PAS_MINUTES` | résolution interne | 30 |
 | `SEMAINE_A_REFERENCE` | n° ISO d'une semaine « A » officielle | `None` (impaires = A) |
 | `SEUIL_RELATIF` | multi-semaines : part des semaines où un cours doit apparaître pour être retenu | 0.5 |
+| `HAUTEUR_DEMI_LIGNE` | hauteur (px) d'une demi-ligne de la grille (1 h = 2 demi-lignes) | 26 |
 | `COULEUR_*`, `LARGEUR_COL_*` | mise en forme du Google Sheet | — |
 
 ## Dépendances

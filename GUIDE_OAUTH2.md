@@ -64,7 +64,7 @@ Le script demande deux autorisations (scopes) : `spreadsheets` (créer/écrire d
 La racine du projet doit contenir :
 
 ```
-Export_ics2sheet/
+pronote-ical-to-sheets-aesh/
 ├── credentials_oauth.json  ← nouveau fichier (hors git)
 ├── generer_edt.py
 ├── auth_google.py

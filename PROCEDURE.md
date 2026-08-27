@@ -24,8 +24,8 @@ exports ProNote. Comptez ~15 minutes une fois les fichiers d'entrée en main (pl
 ### 1.1 Récupérer le code
 
 ```bash
-git clone git@github.com:patrick-reybaud/Export_ics2sheet.git
-cd Export_ics2sheet
+git clone git@github.com:patrick-reybaud/pronote-ical-to-sheets-aesh.git
+cd pronote-ical-to-sheets-aesh
 ```
 
 ### 1.2 Environnement Python

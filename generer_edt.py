@@ -69,6 +69,7 @@ COULEUR_ABSENT = {"red": 0.98, "green": 0.85, "blue": 0.85}
 
 LARGEUR_COL_HORAIRE = 110
 LARGEUR_COL_JOUR = 210
+HAUTEUR_DEMI_LIGNE = 26   # hauteur (px) d'une demi-ligne dans Google Sheets / l'aperçu HTML → 1 h = 52 px
 
 NB_LIGNES_ENTETE = 3  # titre, sous-titre, en-tête des colonnes
 
@@ -355,29 +356,35 @@ def construire_grille(cours, h_min, h_max, lundi_reference):
     return grille, semaines, hors_grille
 
 
-def texte_contenu(contenu):
+def texte_contenu(contenu, compact=False):
+    """Texte d'une cellule ; compact = bloc d'une seule demi-ligne → tout sur une ligne."""
     if contenu is None:
         return ""
     if contenu[0] == "T":
-        return contenu[1]
+        return contenu[1].replace("\n", " · ") if compact else contenu[1]
+    if compact:
+        return f"A : {contenu[1].replace(chr(10), ' · ')} | B : {contenu[2].replace(chr(10), ' · ')}"
     return f"Sem. A : {contenu[1]}\n— — —\nSem. B : {contenu[2]}"
 
 
-def style_contenu(contenu):
+def style_contenu(contenu, compact=False):
     if contenu is None:
         return "vide"
-    return "alt" if contenu[0] == "ALT" else "cours"
+    base = "alt" if contenu[0] == "ALT" else "cours"
+    return f"{base}_compact" if compact else base
 
 
 def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
     """
-    Construit le modèle d'un onglet : lignes (textes), fusions (r0, r1, c0, c1 — fin exclue), styles {(r, c): style}.
-    Une heure est rendue sur 1 ligne, ou 2 lignes (demi-heures) si un jour diffère entre ses deux moitiés.
-    Les cellules identiques consécutives d'une même colonne sont fusionnées verticalement (bloc ProNote).
+    Modèle d'un onglet : lignes (textes), fusions (r0, r1, c0, c1 — fin exclue), styles {(r, c): style},
+    lignes_demi (lignes dont le bord supérieur est une demi-heure → trait pointillé).
+    Quadrillage à l'heure : l'étiquette "8h - 9h" est fusionnée sur les 2 demi-lignes de l'heure ;
+    granularité demi-heure : chaque heure = 2 lignes. Les cellules identiques consécutives d'une colonne
+    sont fusionnées en un bloc (comme ProNote) ; un bloc d'une seule demi-ligne est écrit en compact.
     """
     nb_jours = len(JOURS)
     nb_cols = nb_jours + 1
-    lignes, fusions, styles = [], [], {}
+    lignes, fusions, styles, lignes_demi = [], [], {}, []
 
     lignes.append([titre] + [""] * nb_jours)
     fusions.append((0, 1, 0, nb_cols))
@@ -390,39 +397,39 @@ def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
     for c in range(nb_cols):
         styles[(2, c)] = "entete"
 
-    cles = []  # contenu par (ligne de grille, jour) pour les fusions verticales
+    sous_pas = 60 // PAS_MINUTES  # demi-lignes par heure
+    premiere = len(lignes)
+    contenus = []  # par ligne de grille : contenu de chaque jour
     for h in range(h_min, h_max):
-        s0 = (h - h_min) * 60 // PAS_MINUTES
-        s1 = s0 + 1
-        divisee = any(grille.get((j, s0)) != grille.get((j, s1)) for j in range(nb_jours))
-        if divisee:
-            sous_lignes = [(f"{h}h00 - {h}h30", s0), (f"{h}h30 - {h + 1}h00", s1)]
-        else:
-            sous_lignes = [(f"{h}h - {h + 1}h", s0)]
-        for libelle, s in sous_lignes:
-            contenus = [grille.get((j, s)) for j in range(nb_jours)]
-            r = len(lignes)
-            lignes.append([libelle] + [texte_contenu(x) for x in contenus])
-            styles[(r, 0)] = "horaire"
-            for j, x in enumerate(contenus):
-                styles[(r, j + 1)] = style_contenu(x)
-            cles.append(contenus)
+        r = len(lignes)
+        for k in range(sous_pas):
+            s = (h - h_min) * sous_pas + k
+            lignes.append([f"{h}h - {h + 1}h" if k == 0 else ""] + [""] * nb_jours)
+            styles[(r + k, 0)] = "horaire"
+            for j in range(nb_jours):
+                styles[(r + k, j + 1)] = "vide"
+            if k > 0:
+                lignes_demi.append(r + k)
+            contenus.append([grille.get((j, s)) for j in range(nb_jours)])
+        fusions.append((r, r + sous_pas, 0, 1))
 
-    # Fusions verticales des blocs identiques
-    premiere = NB_LIGNES_ENTETE
+    # Blocs verticaux par jour
     for j in range(nb_jours):
         r = 0
-        while r < len(cles):
-            contenu = cles[r][j]
+        while r < len(contenus):
+            contenu = contenus[r][j]
             fin = r + 1
-            while contenu is not None and fin < len(cles) and cles[fin][j] == contenu:
+            while contenu is not None and fin < len(contenus) and contenus[fin][j] == contenu:
                 fin += 1
-            if fin - r > 1:
-                fusions.append((premiere + r, premiere + fin, j + 1, j + 2))
-                for k in range(r + 1, fin):
-                    lignes[premiere + k][j + 1] = ""
+            if contenu is not None:
+                compact = (fin - r) == 1
+                lignes[premiere + r][j + 1] = texte_contenu(contenu, compact)
+                styles[(premiere + r, j + 1)] = style_contenu(contenu, compact)
+                if not compact:
+                    fusions.append((premiere + r, premiere + fin, j + 1, j + 2))
             r = fin
-    return {"titre": titre, "lignes": lignes, "fusions": fusions, "styles": styles, "nb_cols": nb_cols}
+    return {"titre": titre, "lignes": lignes, "fusions": fusions, "styles": styles, "nb_cols": nb_cols,
+            "lignes_demi": lignes_demi, "hauteur_ligne": HAUTEUR_DEMI_LIGNE}
 
 
 # ───────────────────────────── Rendu HTML (aperçu local) ─────────────────────────────
@@ -430,15 +437,20 @@ def construire_onglet(titre, sous_titre, grille, h_min, h_max, dates_jours):
 CSS_HTML = """
 body{font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:12px;margin:20px;color:#222}
 h1{font-size:20px} h2{font-size:16px;margin-top:40px;border-top:2px solid #999;padding-top:12px}
-table{border-collapse:collapse;margin:8px 0;table-layout:fixed} td,th{border:1px solid #999;padding:3px 5px;vertical-align:middle;white-space:pre-line}
-th{background:#ddd} td.horaire{font-weight:bold;text-align:center;background:#f4f4f4;width:90px} td.cours{background:#d9e8fa;width:200px}
-td.alt{background:#fff2bf;width:200px} td.vide{width:200px} td.titre{font-weight:bold;font-size:14px;background:#eee}
+table{border-collapse:collapse;margin:8px 0;table-layout:fixed;border-bottom:1px solid #999}
+td,th{border-left:1px solid #999;border-right:1px solid #999;border-top:1px solid #999;border-bottom:none;padding:2px 5px;vertical-align:middle;white-space:pre-line}
+tr.demi td{border-top:1px dotted #bbb} tr.grille{height:__HAUTEUR__px} tr.grille td{overflow:hidden}
+th{background:#ddd} td.horaire{font-weight:bold;text-align:center;background:#f4f4f4;width:90px}
+td.cours,td.cours_compact{background:#d9e8fa;width:200px;text-align:center} td.alt,td.alt_compact{background:#fff2bf;width:200px;text-align:center}
+td.cours_compact,td.alt_compact{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;font-size:11px}
+td.vide{width:200px} td.titre{font-weight:bold;font-size:14px;background:#eee}
 td.sous_titre{color:#555;background:#eee} td.absent{background:#fadada} .nav a{margin-right:12px}
 """
 
 
 def rendre_html(onglets, titre_document):
-    parties = [f"<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>{html.escape(titre_document)}</title><style>{CSS_HTML}</style></head><body>"]
+    css = CSS_HTML.replace("__HAUTEUR__", str(HAUTEUR_DEMI_LIGNE))
+    parties = [f"<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>{html.escape(titre_document)}</title><style>{css}</style></head><body>"]
     parties.append(f"<h1>{html.escape(titre_document)}</h1><p class='nav'>")
     for i, o in enumerate(onglets):
         parties.append(f"<a href='#o{i}'>{html.escape(o['titre'])}</a> ")
@@ -452,8 +464,12 @@ def rendre_html(onglets, titre_document):
                 for c in range(c0, c1):
                     if (r, c) != (r0, c0):
                         couvertes.add((r, c))
+        demi = set(o.get("lignes_demi", []))
         for r, ligne in enumerate(o["lignes"]):
-            parties.append("<tr>")
+            classe_tr = ""
+            if o.get("hauteur_ligne") and r >= NB_LIGNES_ENTETE:
+                classe_tr = " class='grille demi'" if r in demi else " class='grille'"
+            parties.append(f"<tr{classe_tr}>")
             for c in range(o["nb_cols"]):
                 if (r, c) in couvertes:
                     continue
@@ -506,6 +522,9 @@ FORMATS = {
     "alt": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 9}, "backgroundColor": COULEUR_ALT},
     "vide": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "textFormat": {"fontSize": 9}},
     "absent": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE", "textFormat": {"fontSize": 9}, "backgroundColor": COULEUR_ABSENT},
+    # blocs d'une seule demi-ligne : une ligne de texte, coupée si trop longue (pas de retour à la ligne)
+    "cours_compact": {"wrapStrategy": "CLIP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 8}, "backgroundColor": COULEUR_COURS},
+    "alt_compact": {"wrapStrategy": "CLIP", "verticalAlignment": "MIDDLE", "horizontalAlignment": "CENTER", "textFormat": {"fontSize": 8}, "backgroundColor": COULEUR_ALT},
 }
 
 
@@ -541,6 +560,14 @@ def requetes_onglet(sheet_id, onglet, largeurs, lignes_figees):
         reqs.append({"updateBorders": {"range": {"sheetId": sheet_id, "startRowIndex": onglet["bordures"], "endRowIndex": len(lignes),
                                                  "startColumnIndex": 0, "endColumnIndex": nb_cols},
                                        "top": bord, "bottom": bord, "left": bord, "right": bord, "innerHorizontal": bord, "innerVertical": bord}})
+        # Demi-heures : trait pointillé en haut de la 2e demi-ligne (invisible à l'intérieur des blocs fusionnés)
+        pointille = {"style": "DOTTED", "width": 1, "color": COULEUR_BORDURE}
+        for r in onglet.get("lignes_demi", []):
+            reqs.append({"updateBorders": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1,
+                                                     "startColumnIndex": 0, "endColumnIndex": nb_cols}, "top": pointille}})
+    if onglet.get("hauteur_ligne"):
+        reqs.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": NB_LIGNES_ENTETE, "endIndex": len(lignes)},
+                                                   "properties": {"pixelSize": onglet["hauteur_ligne"]}, "fields": "pixelSize"}})
     if lignes_figees:
         # Lignes d'en-tête figées uniquement : figer une colonne est refusé par Google car le titre est fusionné sur toute la largeur
         reqs.append({"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": lignes_figees}},
