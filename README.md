@@ -143,3 +143,11 @@ Versions figées dans `requirements.txt` (icalendar, gspread 5.12, google-auth, 
 La lecture de l'ODS se fait sans dépendance externe (XML de `content.xml`).
 L'ancien script `ics_to_sheets.py` utilise `worksheet.update(range, values)` dont l'ordre des arguments change en
 gspread ≥ 6 : ne pas monter de version sans l'adapter.
+
+## Licence
+
+Ce programme est distribué sous licence [MIT](LICENSE) : libre d'utilisation, de modification et de redistribution,
+y compris dans un autre établissement, à condition de conserver la mention de copyright. Il est fourni sans garantie.
+
+La licence couvre **le code et la documentation uniquement** ; elle ne s'applique à aucune donnée d'élève, qui reste
+soumise au RGPD et ne doit jamais être publiée (voir la section « Données personnelles » ci-dessus).
