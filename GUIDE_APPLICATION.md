@@ -9,15 +9,23 @@ Elle fonctionne **entièrement sur le poste** : aucune donnée d'élève ne sort
 
 ### Windows — poste de l'utilisatrice finale
 
-1. Installer **Python 3.11** depuis [python.org](https://www.python.org/downloads/), en cochant
-   **« Add python.exe to PATH »** pendant l'installation (case en bas du premier écran).
-2. Ouvrir le dossier de l'application, puis, une seule fois, double-cliquer sur
-   `installer_windows.bat` (ou taper dans l'invite de commandes :
-   `py -3 -m pip install -r requirements.txt`).
-3. Ensuite, et à chaque utilisation : **double-cliquer sur `demarrer_windows.bat`**.
+**Rien à installer.** Téléchargez l'exécutable depuis la page des versions :
 
-Une fenêtre noire s'ouvre — c'est l'application qui tourne, il faut la laisser ouverte — et le
-navigateur s'ouvre sur l'interface. Pour quitter : fermer la fenêtre noire.
+> **[PIAL-Affectation-AESH.exe](https://github.com/patrick-reybaud/pronote-ical-to-sheets-aesh/releases/latest)** (57 Mo)
+
+Placez-le où vous voulez et **double-cliquez dessus**. Une fenêtre noire s'ouvre — c'est
+l'application qui tourne, laissez-la ouverte — et l'interface s'ouvre dans le navigateur. Pour
+quitter : fermez la fenêtre noire.
+
+Au premier lancement, Windows peut afficher un avertissement SmartScreen parce que le fichier n'est
+pas signé électroniquement : **« Informations complémentaires »** puis **« Exécuter quand même »**.
+C'est normal pour un logiciel diffusé sans certificat d'éditeur ; le fichier est compilé
+automatiquement à partir du code de ce dépôt, sur une machine GitHub, et son empreinte est
+vérifiable dans le journal de compilation.
+
+*Autre méthode, si vous préférez travailler depuis le code source* : installer Python 3.11 en
+cochant « Add python.exe to PATH », lancer une fois `installer_windows.bat`, puis
+`demarrer_windows.bat` à chaque utilisation.
 
 ### macOS — poste de test
 
@@ -216,6 +224,15 @@ l'export montre l'écart, c'est-à-dire ce que la mutualisation fait gagner.
 | « Aucune solution ne respecte toutes les règles » | Une interdiction ou une affectation imposée rend le problème insoluble. Desserrer, puis relancer. |
 | Le calcul ne progresse plus | Normal : il rend la meilleure solution trouvée. Allonger le temps si besoin. |
 | Le port 8765 est occupé | L'application en prend un autre et l'affiche au démarrage. |
+
+---
+
+## Mettre à jour l'application
+
+Chaque nouvelle version est publiée sur la
+[page des versions](https://github.com/patrick-reybaud/pronote-ical-to-sheets-aesh/releases).
+Remplacez simplement l'ancien `.exe` par le nouveau : **vos projets ne sont pas touchés**, ils
+vivent dans `Documents/PIAL-AESH/` et sont indépendants du programme.
 
 ---
 

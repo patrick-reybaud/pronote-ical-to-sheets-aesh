@@ -2,11 +2,16 @@
 
 **Suivi AESH — exports ProNote iCal (`.ics`) + fichier de notifications (`.ods`) → Google Sheets**
 
-Deux chaînes qui s'enchaînent : **[1]** les emplois du temps des élèves notifiés (`generer_edt.py`), puis
-**[2]** le recueil des disponibilités des AESH et leur affectation aux élèves (`aesh.py`).
+**L'application [PIAL — Affectation des AESH](GUIDE_APPLICATION.md) (`app.py`) est le point d'entrée
+recommandé** : elle couvre toute la chaîne, de l'import des fichiers à la publication des emplois du
+temps des AESH, sans rien installer sous Windows.
+
+Les scripts historiques restent disponibles : **[1]** les emplois du temps des élèves notifiés
+(`generer_edt.py`), puis **[2]** le recueil et l'affectation en ligne de commande (`aesh.py`).
 
 | Document | Contenu |
 |---|---|
+| 🖥️ [GUIDE_APPLICATION.md](GUIDE_APPLICATION.md) | **Application « PIAL — Affectation des AESH »** : installation, les neuf étapes, dépannage — [télécharger l'exécutable Windows](https://github.com/patrick-reybaud/pronote-ical-to-sheets-aesh/releases/latest) |
 | 📘 [PROCEDURE.md](PROCEDURE.md) | Procédure pas à pas : installation, préparation d'une année scolaire, génération, contrôles, dépannage |
 | 🔑 [GUIDE_OAUTH2.md](GUIDE_OAUTH2.md) | Création du client OAuth2 dans Google Cloud (à faire une seule fois) |
 
