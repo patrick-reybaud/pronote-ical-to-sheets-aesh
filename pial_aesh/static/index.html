@@ -169,32 +169,66 @@ function zoneDepot(id, titre, detail, accept, dossier) {
 }
 function brancherDepot(id, url, apresEnvoi) {
   const zone = $("#" + id), champ = $("input", zone), retour = $("#" + id + "-retour");
-  // Envoi par lots : un dossier d'exports ProNote peut contenir plus d'un millier de fichiers,
-  // au-delà de ce qu'un seul formulaire accepte — et cela donne une progression lisible.
-  const TAILLE_LOT = 150;
+  // Envoi par lots. Un dossier d'exports ProNote dépasse souvent le millier de fichiers, au-delà de
+  // ce qu'un seul formulaire accepte. Les lots sont volontairement petits et chacun est réessayé
+  // deux fois, puis découpé en deux, avant d'abandonner : un envoi qui échoue ponctuellement ne doit
+  // pas faire perdre tout l'import. L'état de l'application n'est rafraîchi qu'à la fin.
+  const TAILLE_LOT = 40, ESSAIS = 3;
   const envoyer = async fichiers => {
     if (!fichiers.length) return;
-    const cumul = {recus:0, indexes:0, nb_ignores:0, ignores:[]};
+    const debut = Date.now();
+    const cumul = {recus: 0, indexes: 0, nb_ignores: 0, ignores: [], remplaces: 0, conserves: 0};
     let dernier = null;
-    for (let debut = 0; debut < fichiers.length; debut += TAILLE_LOT) {
-      const lot = fichiers.slice(debut, debut + TAILLE_LOT);
-      const fait = Math.min(debut + lot.length, fichiers.length);
-      retour.innerHTML = message("info",
-        `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span>
-         Import en cours : ${fait} / ${fichiers.length} fichier(s)…`);
+
+    const envoyerLot = async (lot, estDernier, profondeur = 0) => {
       const corps = new FormData();
       for (const f of lot) corps.append("fichiers", f);
-      try { dernier = await api(url, {method:"POST", body: corps}); }
-      catch (e) { retour.innerHTML = erreurAffichee(e); return; }
+      for (let essai = 1; essai <= ESSAIS; essai++) {
+        try {
+          return await api(url + (estDernier ? "?dernier=1" : ""), {method: "POST", body: corps});
+        } catch (e) {
+          if (essai === ESSAIS) {
+            if (lot.length > 1 && profondeur < 3) {       // on découpe : un lot plus court passe souvent
+              const milieu = Math.ceil(lot.length / 2);
+              await envoyerLot(lot.slice(0, milieu), false, profondeur + 1);
+              return await envoyerLot(lot.slice(milieu), estDernier, profondeur + 1);
+            }
+            throw new Error(`${e.message} (après ${ESSAIS} tentatives sur un lot de ${lot.length} fichier(s))`);
+          }
+          await new Promise(r => setTimeout(r, 400 * essai));
+        }
+      }
+    };
+
+    for (let debutLot = 0; debutLot < fichiers.length; debutLot += TAILLE_LOT) {
+      const lot = fichiers.slice(debutLot, debutLot + TAILLE_LOT);
+      const fait = Math.min(debutLot + lot.length, fichiers.length);
+      const reste = fait > 20
+        ? ` — environ ${Math.max(1, Math.round((Date.now() - debut) / fait * (fichiers.length - fait) / 1000))} s restantes`
+        : "";
+      retour.innerHTML = message("info",
+        `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span>
+         Import en cours : <b>${fait} / ${fichiers.length}</b> fichier(s)${reste}`);
+      try {
+        dernier = await envoyerLot(lot, fait >= fichiers.length);
+      } catch (e) {
+        retour.innerHTML = erreurAffichee(e) + message("avert",
+          `<b>${cumul.recus} fichier(s) ont malgré tout été importés.</b> Vous pouvez relancer le
+           dépôt : les fichiers déjà présents ne sont pas réimportés en double.`);
+        await majEtat();
+        return;
+      }
       cumul.recus += dernier.recus || 0;
       cumul.indexes = dernier.indexes ?? cumul.indexes;
       cumul.nb_ignores += dernier.nb_ignores || 0;
+      cumul.remplaces += dernier.remplaces || 0;
+      cumul.conserves += dernier.conserves || 0;
       if (dernier.ignores) cumul.ignores.push(...dernier.ignores);
     }
     await majEtat();
     retour.innerHTML = "";
-    apresEnvoi(fichiers.length > TAILLE_LOT ? {...dernier, ...cumul,
-      ignores: cumul.ignores.slice(0,20)} : dernier, retour);
+    apresEnvoi(fichiers.length > TAILLE_LOT
+      ? {...dernier, ...cumul, ignores: cumul.ignores.slice(0, 20)} : dernier, retour);
   };
   zone.onclick = () => champ.click();
   champ.onchange = () => envoyer([...champ.files]);

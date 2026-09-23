@@ -51,6 +51,7 @@ autre et l'affiche dans la fenêtre.
 | **Tout le travail d'un projet** | `…/<projet>/`**`projet.json`** |
 | Fichiers importés (recopiés) | `…/<projet>/sources/` — le fichier PIAL, et les `.ics` dans `sources/ics/` |
 | Emplois du temps et archives produits | `…/<projet>/sorties/` |
+| **Journal de l'application** | `PIAL-AESH/journal.log` — à joindre en cas de problème |
 
 **`projet.json` contient absolument tout le travail** : établissement retenu, semaines types, plage
 horaire, efforts par matière, affinités, disponibilités des AESH, matières retirées, règles de
@@ -265,6 +266,16 @@ l'export montre l'écart, c'est-à-dire ce que la mutualisation fait gagner.
 | « Aucune solution ne respecte toutes les règles » | Une interdiction ou une affectation imposée rend le problème insoluble. Desserrer, puis relancer. |
 | Le calcul ne progresse plus | Normal : il rend la meilleure solution trouvée. Allonger le temps si besoin. |
 | Le port 8765 est occupé | L'application en prend un autre et l'affiche au démarrage. |
+| L'import d'un dossier d'exports s'interrompt | Redéposez simplement le dossier : les fichiers déjà importés ne sont pas repris en double, l'import poursuit là où il s'était arrêté. Le détail est dans `PIAL-AESH/journal.log`. |
+
+---
+
+## En cas de problème : le journal
+
+Tout ce que fait l'application est écrit dans **`PIAL-AESH/journal.log`** (dans votre dossier
+personnel), en plus de la fenêtre noire. Le fichier est borné à 2 Mo et conserve l'exemplaire
+précédent. Si quelque chose se passe mal, c'est ce fichier qu'il faut joindre : il contient l'heure,
+l'opération en cours et le détail de l'erreur, alors que la fenêtre noire disparaît dès qu'on la ferme.
 
 ---
 

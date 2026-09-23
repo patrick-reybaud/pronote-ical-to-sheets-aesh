@@ -15,6 +15,8 @@ Options :
 """
 
 import argparse
+import logging
+import logging.handlers
 import socket
 import sys
 import threading
@@ -24,6 +26,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 PORT_DEFAUT = 8765
+TAILLE_JOURNAL = 2 * 1024 * 1024      # 2 Mo, deux fichiers conservés
+
+
+def installer_journal(dossier):
+    """
+    Écrit tout ce que fait l'application dans un fichier, en plus de la fenêtre console.
+
+    Sans cela, un incident survenu chez l'utilisatrice ne laisse aucune trace : la fenêtre est
+    fermée, et il ne reste rien à examiner. Le fichier est borné et tourne sur deux exemplaires.
+    """
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier = dossier / "journal.log"
+    rotation = logging.handlers.RotatingFileHandler(
+        fichier, maxBytes=TAILLE_JOURNAL, backupCount=1, encoding="utf-8")
+    rotation.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s %(name)s  %(message)s",
+                                            "%d/%m %H:%M:%S"))
+    racine = logging.getLogger()
+    racine.setLevel(logging.INFO)
+    racine.addHandler(rotation)
+    racine.addHandler(logging.StreamHandler(sys.stdout))
+    return fichier
 
 
 def port_libre(souhaite, essais=20):
@@ -55,19 +78,34 @@ def main():
 
     port = port_libre(arguments.port)
     adresse = f"http://127.0.0.1:{port}/"
-    DOSSIER_PROJETS.mkdir(parents=True, exist_ok=True)
+    journal = installer_journal(DOSSIER_PROJETS)
 
     print("=" * 66)
     print("  PIAL — Affectation des AESH")
     print("=" * 66)
     print(f"  Interface   : {adresse}")
     print(f"  Projets     : {DOSSIER_PROJETS}")
+    print(f"  Journal     : {journal}")
     print("  Pour quitter: fermez cette fenêtre, ou Ctrl+C")
     print("=" * 66)
+    logging.getLogger("pial").info("démarrage sur %s", adresse)
 
     if not arguments.sans_navigateur:
         threading.Timer(1.0, lambda: webbrowser.open(adresse)).start()
     try:
+        # Le serveur intégré de Flask est un serveur de développement : il lâche des connexions
+        # lors d'envois volumineux et répétés, ce qui interrompait l'import d'un dossier d'exports
+        # ProNote à un endroit variable. Waitress est un serveur WSGI complet, en Python pur, qui
+        # tient la charge et fonctionne aussi bien sous Windows.
+        from waitress import serve
+        serve(application, host="127.0.0.1", port=port, threads=8,
+              channel_timeout=1800,          # un import ou un calcul peut durer longtemps
+              max_request_body_size=2 * 1024 ** 3,
+              ident="PIAL-AESH", clear_untrusted_proxy_headers=True)
+    except ImportError:
+        logging.getLogger("pial").warning(
+            "waitress absent — repli sur le serveur de développement, moins robuste "
+            "lors de l'import de nombreux fichiers")
         application.run(host="127.0.0.1", port=port, debug=False, threaded=True)
     except KeyboardInterrupt:
         print("\nArrêt de l'application.")

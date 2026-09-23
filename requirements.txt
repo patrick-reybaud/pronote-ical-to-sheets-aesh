@@ -3,6 +3,7 @@
 
 # — Application —
 flask==3.1.3            # interface locale (127.0.0.1 uniquement)
+waitress==3.0.2         # serveur WSGI : celui de Flask lâche des connexions sous charge
 ortools==9.15.6755      # solveur CP-SAT : calcul des affectations
 openpyxl==3.1.5         # classeur de recueil et exports .xlsx
 icalendar==5.0.11       # lecture des exports ProNote (.ics)

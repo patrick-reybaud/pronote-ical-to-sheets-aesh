@@ -11,6 +11,8 @@ Toutes les réponses d'erreur sont des messages en français destinés à l'util
 traces techniques : c'est lui qui les lira.
 """
 
+import logging
+import time
 import traceback
 from pathlib import Path
 
@@ -30,9 +32,12 @@ application = Flask(__name__, static_folder=None)
 # Un export ProNote d'année entière pèse ~370 Ko par élève : un PIAL complet dépasse facilement
 # le millier de fichiers. Les deux plafonds comptent — celui des octets ET celui du nombre de
 # parties du formulaire (1000 par défaut), qui est le premier atteint.
-application.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
+application.config["MAX_CONTENT_LENGTH"] = 2 * 1024 ** 3
 application.config["MAX_FORM_PARTS"] = 5000
-application.config["MAX_FORM_MEMORY_SIZE"] = 64 * 1024 * 1024
+# Pas de plafond sur la mémoire de formulaire : les fichiers déposés sont écrits sur disque au fil
+# de la lecture, et un plafond bas n'apportait qu'un risque d'échec en cours d'import.
+application.config["MAX_FORM_MEMORY_SIZE"] = None
+journal = logging.getLogger("pial.serveur")
 _courant = {"projet": None}
 
 
@@ -48,11 +53,13 @@ class Erreur(Exception):
 
 @application.errorhandler(Erreur)
 def _erreur_metier(e):
+    journal.warning("refus sur %s %s : %s", request.method, request.path, e)
     return jsonify({"erreur": str(e)}), 400
 
 
 @application.errorhandler(Exception)
 def _erreur_inattendue(e):
+    journal.exception("erreur inattendue sur %s %s", request.method, request.path)
     traceback.print_exc()
     return jsonify({"erreur": f"Erreur inattendue : {e.__class__.__name__} — {e}",
                     "detail": traceback.format_exc()[-1500:]}), 500
@@ -179,18 +186,28 @@ def api_import_pial():
 
 @application.post("/api/import/ics")
 def api_import_ics():
+    """
+    Reçoit un lot d'exports ProNote et les écrit dans le projet.
+
+    L'import se fait par lots : l'interface en envoie plusieurs à la suite. Réindexer à chaque lot
+    serait du travail refait autant de fois qu'il y a de lots, d'où le paramètre « dernier », qui
+    ne déclenche l'indexation qu'à la fin. Chaque lot est tracé dans le journal : sans cela, un
+    incident en cours d'import ne laisse rien à examiner.
+    """
+    debut = time.monotonic()
     projet = projet_courant()
-    fichiers = [f for f in request.files.getlist("fichiers")
-                if Path(f.filename).suffix.lower() == ".ics"]
+    recus = request.files.getlist("fichiers")
+    fichiers = [f for f in recus if Path(f.filename).suffix.lower() == ".ics"]
     if not fichiers:
         raise Erreur("Aucun fichier .ics reçu. Déposez les exports ProNote (un fichier par élève) "
                      "ou le dossier qui les contient.")
     dossier = projet.dossier / "sources" / "ics"
     dossier.mkdir(parents=True, exist_ok=True)
-    remplaces, conserves = [], []
+    remplaces, conserves, octets = [], [], 0
     for f in fichiers:
         cible = dossier / Path(f.filename).name
         contenu = f.read()
+        octets += len(contenu)
         # Un même élève peut arriver par deux exports (par exemple un export de quelques semaines
         # puis un export d'année entière). On garde le plus complet — c'est-à-dire le plus gros —
         # au lieu d'écraser aveuglément, et on le dit.
@@ -201,8 +218,18 @@ def api_import_ics():
                 conserves.append(cible.name)
                 continue
         cible.write_bytes(contenu)
-    index, ignores = projet.ajouter_sources_ics([dossier])
-    return jsonify({"recus": len(fichiers), "indexes": len(index),
+
+    dernier = request.args.get("dernier") in ("1", "true", "oui")
+    if dernier:
+        index, ignores = projet.ajouter_sources_ics([dossier])
+    else:
+        index, ignores = [], []
+    total = len(list(dossier.glob("*.ics")))
+    journal.info("import ICS : %d reçus, %.1f Mo, %d en tout, %.1f s%s",
+                 len(fichiers), octets / 1e6, total, time.monotonic() - debut,
+                 " (indexation)" if dernier else "")
+    return jsonify({"recus": len(fichiers), "total": total,
+                    "indexes": len(index) if dernier else total,
                     "ignores": ignores[:20], "nb_ignores": len(ignores),
                     "remplaces": len(remplaces), "conserves": len(conserves)})
 
