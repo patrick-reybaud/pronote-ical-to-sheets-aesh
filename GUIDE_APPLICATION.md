@@ -267,22 +267,72 @@ Le résultat indique combien d'améliorations ont été trouvées et pourquoi la
 toutes les règles dures ; chercher plus longtemps ne fait qu'affiner la qualité.
 
 ### 9 · Emplois du temps
-Chaque élève a **sa couleur**, rappelée en légende ; un créneau partagé par deux élèves apparaît en
-bandes obliques. Les créneaux consécutifs identiques sont **fusionnés en un seul bloc**, comme dans
-ProNote, au lieu de répéter la même chose toutes les demi-heures. Et lorsqu'un cours a lieu **toutes
-les semaines**, la cellule couvre les deux demi-colonnes « sem. A » et « sem. B » : les colonnes ne
-se séparent que là où les deux semaines diffèrent réellement.
 
-#### Changer l'AESH d'un cours
+Trois vues sur le même travail : **Élèves**, **AESH**, **Synthèse & exports**. L'écran est accessible
+dès que les semaines types sont choisies — on peut corriger un emploi du temps avant même le premier
+calcul.
 
-En bas de l'écran, le bloc **Ajuster les affectations** liste tous les cours affectés et permet de
-confier l'un d'eux à un autre accompagnant. Ne sont proposés que les AESH **disponibles sur toute la
-durée du cours** et non interdits pour cet élève ; la mention « occupé » indique qu'il faudra
-déplacer ce qu'ils font à ce moment-là.
+Dans les deux grilles, les créneaux consécutifs identiques sont **fusionnés en un seul bloc**, comme
+dans ProNote. Et lorsqu'un cours a lieu **toutes les semaines**, la cellule couvre les deux
+demi-colonnes « sem. A » et « sem. B » : elles ne se séparent que là où les deux semaines diffèrent
+réellement. C'est exactement le découpage des exports — ce qu'on voit à l'écran est ce qu'on
+imprimera.
 
-Un cours confié à la main devient une **règle dure** : au recalcul, tout le reste se réorganise
-autour, ou le calcul annonce que c'est impossible. Filtrez par élève, ou n'affichez que les cours
-pour lesquels un AESH est libre — ceux qui se permutent sans rien déranger.
+#### Vue « Élèves » — celle où l'on agit
+
+Un élève à la fois, sa semaine entière sous les yeux. Chaque cours porte **la couleur de son
+accompagnant**, rappelée en légende ; en gris clair les cours à accompagner que personne ne prend, en
+gris plus pâle ceux qu'on a retirés de l'accompagnement, avec leur motif (dispense ProNote, famille
+de matières décochée, effort mis à 0).
+
+**Cliquez sur un cours** : un volet s'ouvre, avec deux choses.
+
+*Qui l'accompagne.* Le menu propose les AESH **disponibles sur toute la durée du cours**, non
+interdits pour cet élève et qui ne refusent pas la matière — les trois mêmes conditions que le
+calcul, pour qu'on ne propose jamais une affectation qu'il déclarerait ensuite impossible. « libre »
+signifie que l'AESH n'a rien à ce moment-là, « occupé » qu'il faudra déplacer ce qu'il y fait. On
+peut aussi choisir **personne**, pour assumer un cours sans accompagnement et que le calcul cesse d'y
+consacrer des heures utiles ailleurs.
+
+> **Choisir quelqu'un vaut verrou.** C'est une règle dure : au recalcul, tout le reste se réorganise
+> autour, ou le calcul annonce qu'il n'y arrive pas. Pour figer une affectation que le calcul a
+> trouvée lui-même, il suffit de la choisir à nouveau dans le menu — elle porte alors un cadenas.
+> Les boutons **Verrouiller tout ce qu'il a obtenu** et **Libérer ses verrous** font la même chose
+> pour l'élève entier.
+
+*Le cours lui-même.* Jour, heure de début, durée, matière, salle : tout se corrige. On peut aussi
+**supprimer** un cours ou en **ajouter** un que ProNote ne connaît pas, sur la semaine A, la B ou les
+deux. Utile quand un élève change de groupe, quand un cours a été déplacé, ou quand l'export est
+simplement en retard sur la réalité.
+
+Ces corrections **vivent dans le projet, à côté de ProNote** : elles ne modifient aucun fichier
+importé et se réappliquent toutes seules après un nouvel import. Un cours corrigé est signalé dans la
+grille, et le bouton **Revenir à ProNote** annule la correction. Si la correction plaçait l'élève à
+deux endroits en même temps, elle est refusée en nommant le cours qui gêne : un emploi du temps
+impossible ne se rattrape pas au calcul suivant.
+
+Les corrections valent partout : dans le calcul, dans les exports, et pendant les périodes de stage
+ou de CCF.
+
+#### Vue « AESH » — lecture seule
+
+La semaine de chaque accompagnant, **une couleur par élève suivi** ; un créneau partagé par deux
+élèves apparaît en bandes obliques. Quotité, heures affectées, disponibilités déclarées et nombre
+d'élèves sont rappelés en haut.
+
+Volontairement non modifiable : on n'affecte pas un élève depuis la grille de son accompagnant sans
+voir le reste de sa journée à lui. Tout se fait côté élève.
+
+#### Vue « Synthèse & exports »
+
+Le bilan chiffré, les exports, et le tableau **Ajuster les affectations** — la même chose que la
+grille, mais en liste : pratique pour balayer tous les cours d'un coup, notamment ceux que personne
+n'accompagne. Filtrez par élève, ou n'affichez que les cours non accompagnés, ou ceux pour lesquels
+un AESH est libre — ceux qui se permutent sans rien déranger.
+
+Un bandeau apparaît dès qu'un verrou ou une correction rend le dernier calcul dépassé, avec le bouton
+pour le relancer. Et si le calcul n'a pas pu honorer un verrou — l'AESH n'est plus disponible, le
+cours a disparu de l'emploi du temps — il le dit au lieu de l'ignorer en silence.
 
 #### Le bilan
 

@@ -32,6 +32,8 @@ DUREE_CRENEAU_MIN = 30
 # elles sont toutes réglables depuis l'écran « Pondérations ». L'ordre de grandeur compte plus que
 # la valeur absolue — un créneau couvert vaut « couverture x effort », soit 300 pour un effort neutre,
 # ce qui donne l'échelle à laquelle les pénalités doivent se comparer pour peser.
+SANS_ACCOMPAGNEMENT = "__sans__"   # verrou signifiant « ce cours reste sans accompagnement »
+
 POIDS_DEFAUT = {
     "couverture": 100,      # couvrir des demi-heures, pondérées par l'effort demandé à l'élève
     "affinite": 30,         # aisance déclarée de l'AESH dans la matière du créneau
@@ -387,16 +389,34 @@ def resoudre(probleme, exigence="standard", journal=None, secondes=None):
         else:
             obligatoires_impossibles.append(cle_bloc)
 
-    # ── H9b : cours confiés à la main depuis l'écran des résultats. Ce n'est pas une suggestion :
-    # le calcul doit s'y plier et réarranger le reste, ou déclarer que c'est impossible.
+    # ── H9b : cours verrouillés à la main depuis l'écran des emplois du temps. Ce n'est pas une
+    # suggestion : le calcul doit s'y plier et réarranger le reste, ou déclarer que c'est impossible.
+    # Un verrou peut aussi dire « personne » — un cours qu'on assume de laisser sans accompagnement,
+    # pour que le calcul cesse d'y consacrer des heures au détriment d'ailleurs.
+    imposes_impossibles = []
     for cle_cours, id_aesh in probleme.cours_imposes.items():
         try:
             id_eleve, parite, id_cours = cle_cours.split("|", 2)
         except ValueError:
             continue
-        variable = x.get((id_aesh, (id_eleve, parite, id_cours)))
-        if variable is not None:
-            modele.Add(variable == 1)
+        cle_bloc = (id_eleve, parite, id_cours)
+        if cle_bloc not in blocs:
+            # Le cours a disparu de l'emploi du temps (matière retirée, retouche, nouvel export) :
+            # le verrou n'a plus d'objet. On le signale plutôt que de l'appliquer dans le vide.
+            imposes_impossibles.append({"cours": cle_cours, "aesh": id_aesh,
+                                        "raison": "ce cours n'est plus dans l'emploi du temps"})
+            continue
+        if id_aesh == SANS_ACCOMPAGNEMENT:
+            for variable in par_bloc.get(cle_bloc, []):
+                modele.Add(variable == 0)
+            continue
+        variable = x.get((id_aesh, cle_bloc))
+        if variable is None:
+            imposes_impossibles.append({"cours": cle_cours, "aesh": id_aesh,
+                                        "raison": "cet AESH n'est pas disponible sur toute la durée "
+                                                  "du cours, ou la règle le lui interdit"})
+            continue
+        modele.Add(variable == 1)
 
     # ── H9 : affectations imposées
     for cle_paire, valeur in probleme.paires.items():
@@ -520,6 +540,14 @@ def resoudre(probleme, exigence="standard", journal=None, secondes=None):
             {"eleve": par_id_eleve[c[0]]["nom_complet"],
              "matiere": blocs[c]["cours"]["matiere"], "parite": c[1]}
             for c in obligatoires_impossibles]
+    if imposes_impossibles:
+        # Un verrou que le calcul n'a pas pu honorer doit se voir : sans cela l'utilisateur croirait
+        # sa décision appliquée alors qu'elle a été ignorée.
+        for refus in imposes_impossibles:
+            id_eleve = refus["cours"].split("|", 1)[0]
+            refus["eleve"] = (par_id_eleve.get(id_eleve) or {}).get("nom_complet", id_eleve)
+            refus["aesh_nom"] = (par_id_aesh.get(refus["aesh"]) or {}).get("nom_complet", refus["aesh"])
+        resultat["synthese"]["verrous_impossibles"] = imposes_impossibles
     return resultat
 
 

@@ -100,6 +100,33 @@ td.p-2{background:#fbdedc}td.p2{background:#cce8cc}
 @keyframes t{to{transform:rotate(360deg)}}
 .regle{padding:5px 0;border-bottom:1px solid #eef0f2;display:flex;gap:10px;align-items:baseline}
 .regle code{background:var(--gris);padding:1px 5px;border-radius:3px;font-size:12px;flex-shrink:0}
+
+/* ── Emplois du temps à l'écran ──────────────────────────────────────────────────────────────
+   Même grille que les exports : demi-heures fusionnées, semaines A et B côte à côte et réunies
+   quand elles portent le même cours. Les en-têtes ne sont pas collants ici, contrairement aux
+   autres tableaux : une grille se lit d'un bloc, pas en défilant. */
+.edt{border-collapse:collapse;table-layout:fixed;width:100%;background:#fff;margin:4px 0 0}
+.edt td,.edt th{border:1px solid #9aa0a6;padding:2px 3px;text-align:center;vertical-align:middle;
+  white-space:pre-line;overflow:hidden;font-size:10.5px;line-height:1.25}
+.edt th{background:#eef1f4;font-size:11px;position:static;box-shadow:none}
+.edt th.ab{background:#f4f6f8;font-weight:400;font-style:italic;font-size:9px}
+.edt td.h{background:#f2f4f6;font-weight:600;font-size:9.5px;color:#4a5258}
+.edt tr:hover td{background:inherit}
+.edt td.cours{cursor:pointer}
+.edt td.cours:hover{outline:2px solid var(--bleu);outline-offset:-2px}
+.edt td.hors{color:#6b7279}
+.edt .verrou{font-size:10px}
+.edt .retouche{position:absolute}
+.onglets{display:flex;gap:2px;border-bottom:2px solid var(--bord);margin:0 0 16px}
+.onglets button{border:0;background:none;padding:9px 16px;font-size:14px;cursor:pointer;
+  color:#4a5258;border-bottom:3px solid transparent;margin-bottom:-2px}
+.onglets button:hover{color:var(--bleu)}
+.onglets button.actif{color:var(--bleu);font-weight:600;border-bottom-color:var(--bleu)}
+.legende-edt{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:0 0 10px}
+.legende-edt span{border:1px solid #9aa0a6;border-radius:3px;padding:2px 8px;font-size:11.5px}
+.champ{border:1px solid var(--bord);border-radius:4px;padding:5px 7px;font-size:13.5px}
+.grille-champs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.grille-champs label{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:#4a5258}
 </style>
 </head>
 <body>
@@ -130,6 +157,8 @@ let E = {};            // état renvoyé par le serveur
 let POP = null;        // population (élèves, AESH, matières) — mise en cache
 let etape = "projet";
 const $ = (s, r=document) => r.querySelector(s);
+// Verrou signifiant « ce cours reste sans accompagnement » — même valeur que côté serveur.
+const SANS_ACCOMPAGNEMENT = "__sans__";
 const ech = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 async function api(url, options = {}) {
@@ -208,7 +237,9 @@ function dessinerNav() {
   const actif = {projet:true, import:ouvert, etablissement:pial, semaines:pial&&ics&&etab,
                  eleves:etab&&sem, aesh:etab&&sem, mutualisation:etab&&sem, periodes:etab&&sem,
                  ponderations:etab&&sem, calcul:dispo,
-                 resultat: !!E.etat?.resultat};
+                 // Accessible dès qu'il y a des emplois du temps : on peut vouloir les corriger
+                 // avant le premier calcul, pas seulement relire ce qu'il a produit.
+                 resultat: etab&&sem};
   $("#nav").innerHTML = ETAPES.map(([cle, nom], i) =>
     `<button data-e="${cle}" class="${cle===etape?'actif':''}" ${actif[cle]?'':'disabled'}>
        <span class="num">${i+1}</span>${nom}</button>`).join("");
@@ -1403,17 +1434,57 @@ ECRANS.calcul = async () => {
   };
 };
 
+/*
+ * Écran des emplois du temps : trois vues sur le même travail.
+ *
+ * On y voit la grille des élèves — la seule qu'on modifie, parce qu'on y a sous les yeux tout ce
+ * qu'on déplace —, celle des AESH, et la synthèse chiffrée avec les exports. Le choix de la vue
+ * survit aux allers-retours dans le menu.
+ */
+const EDT = {vue: "eleves", eleve: null, aesh: null, donnees: {}};
+
 ECRANS.resultat = async () => {
+  $("#ecran").innerHTML = `
+    <h2>Emplois du temps</h2>
+    <div id="alerte-perime"></div>
+    <div class="onglets">
+      ${[["eleves","Élèves"],["aesh","AESH"],["synthese","Synthèse & exports"]].map(([c,n]) =>
+        `<button data-v="${c}" class="${EDT.vue===c?"actif":""}">${n}</button>`).join("")}
+    </div>
+    <div id="contenu-edt"><p class="aide">Chargement…</p></div>`;
+  document.querySelectorAll(".onglets button").forEach(b => b.onclick = () => {
+    EDT.vue = b.dataset.v; dessiner();
+  });
+  alertePerime();
+  if (EDT.vue === "eleves") return vueElevesEDT();
+  if (EDT.vue === "aesh") return vueAeshEDT();
+  return vueSynthese();
+};
+
+function alertePerime() {
+  const zone = $("#alerte-perime");
+  if (!zone) return;
+  zone.innerHTML = E.etat?.resultat_perime ? message("avert",
+    `<b>Le calcul ne tient pas encore compte de vos dernières modifications.</b>
+     Verrous et corrections d'emploi du temps ne s'appliquent qu'au calcul suivant.
+     <button class="action" id="relancer-perime" style="margin-left:10px">Relancer le calcul</button>`) : "";
+  const bouton = $("#relancer-perime");
+  if (bouton) bouton.onclick = () => { etape = "calcul"; dessinerNav(); dessiner(); };
+}
+
+async function vueSynthese() {
   const r = await api("/api/resultat");
-  if (!r.affectations?.length) { $("#ecran").innerHTML = `<h2>Emplois du temps</h2>` +
-    message("info", "Aucun calcul n'a encore abouti."); return; }
+  if (!r.affectations?.length) {
+    $("#contenu-edt").innerHTML = message("info", "Aucun calcul n'a encore abouti."); return; }
   const s = r.synthese;
   const pastille = t => t === null ? `<span class="pastille neutre">—</span>`
     : `<span class="pastille ${t>=85?"ok":t>=65?"attention":"ko"}">${t} %</span>`;
-  $("#ecran").innerHTML = `
-    <h2>Emplois du temps</h2>
+  $("#contenu-edt").innerHTML = `
     <p class="aide">Calculé le ${ech((r.calcule_le||"").replace("T"," "))} — statut
       <b>${r.statut === "OPTIMAL" ? "optimal" : "meilleure solution trouvée dans le temps imparti"}</b>.</p>
+    ${(s.verrous_impossibles||[]).length ? message("err",
+      "<b>Verrous que le calcul n'a pas pu honorer :</b> " + s.verrous_impossibles.map(v =>
+        `${ech(v.eleve)} → ${ech(v.aesh_nom)} (${ech(v.raison)})`).join(" · ")) : ""}
     <div class="carte">
       <div class="stat"><b>${s.taux_global} %</b><span>couverture globale</span></div>
       <div class="stat"><b>${s.taux_minimal} %</b><span>élève le moins bien servi</span></div>
@@ -1464,22 +1535,22 @@ ECRANS.resultat = async () => {
       </table></div></div>` : ""}`;
   $("#exp-xlsx").onclick = async e => {
     try { await telecharger("/api/export/xlsx", e.target); }
-    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+    catch (err) { $("#retour-export").innerHTML = erreurAffichee(err); }
   };
   $("#exp-html").onclick = async e => {
     try { await telecharger("/api/export/html", e.target); }
-    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+    catch (err) { $("#retour-export").innerHTML = erreurAffichee(err); }
   };
   $("#exp-eleves").onclick = async e => {
     try { await telecharger("/api/export/eleves", e.target); }
-    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+    catch (err) { $("#retour-export").innerHTML = erreurAffichee(err); }
   };
   $("#exp-eleves-xlsx").onclick = async e => {
     try { await telecharger("/api/export/eleves-xlsx", e.target); }
-    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+    catch (err) { $("#retour-export").innerHTML = erreurAffichee(err); }
   };
   await ajustementAffectations();
-};
+}
 
 async function ajustementAffectations() {
   const d = await api("/api/alternatives");
@@ -1493,12 +1564,13 @@ async function ajustementAffectations() {
   const zone = document.createElement("div");
   zone.className = "carte";
   zone.innerHTML = `
-    <b>Ajuster les affectations</b>
-    <p class="aide" style="margin:6px 0 12px">Confiez un cours à un autre AESH. Ne sont proposés que
-      ceux qui sont <b>disponibles sur toute la durée du cours</b> et non interdits pour cet élève ;
-      « occupé » signifie qu'il faudra déplacer ce qu'ils font à ce moment-là — le calcul s'en charge,
-      ou vous dira qu'il n'y arrive pas. Un cours confié à la main devient une <b>règle dure</b> :
-      le reste s'organise autour.</p>
+    <b>Ajuster les affectations — vue en liste</b>
+    <p class="aide" style="margin:6px 0 12px">La même chose que dans la grille de l'onglet « Élèves »,
+      mais en liste : pratique pour balayer tous les cours d'un coup, notamment ceux que personne
+      n'accompagne. Ne sont proposés que les AESH <b>disponibles sur toute la durée du cours</b>, non
+      interdits pour cet élève et qui ne refusent pas la matière ; « occupé » signifie qu'il faudra
+      déplacer ce qu'ils font à ce moment-là — le calcul s'en charge, ou vous dira qu'il n'y arrive
+      pas. Un cours confié à la main devient une <b>règle dure</b> : le reste s'organise autour.</p>
     <div class="ligne">
       <label>Élève</label>
       <select id="filtre-eleve" style="min-width:240px">
@@ -1506,18 +1578,28 @@ async function ajustementAffectations() {
         ${eleves.map(n => `<option value="${ech(n)}">${ech(n)}</option>`).join("")}
       </select>
       <label><input type="checkbox" id="filtre-libre"> seulement les cours ayant un AESH libre</label>
+      <label><input type="checkbox" id="filtre-sans"> seulement les cours non accompagnés</label>
       <span id="compteur-imposes" style="margin-left:auto;color:#5b6570">
         ${nbImposes ? `<b>${nbImposes} cours confié(s) à la main</b>` : "aucun cours confié à la main"}</span>
     </div>
     <div id="retour-imposer"></div>
     <div id="table-ajust"></div>`;
-  $("#ecran").appendChild(zone);
+  $("#contenu-edt").appendChild(zone);
 
   const dessinerTable = () => {
     const eleve = $("#filtre-eleve").value, seulementLibres = $("#filtre-libre").checked;
-    const lignes = d.cours.filter(c => (!eleve || c.eleve_nom === eleve)
-      && (!seulementLibres || c.alternatives.some(a => a.libre)));
-    $("#table-ajust").innerHTML = lignes.length ? `<div class="defile"><table>
+    const seulementSans = $("#filtre-sans").checked;
+    const toutes = d.cours.filter(c => (!eleve || c.eleve_nom === eleve)
+      && (!seulementLibres || c.alternatives.some(a => a.libre))
+      && (!seulementSans || !c.aesh));
+    // Huit cents cours, chacun avec son menu d'AESH, font une page lente et illisible. On en montre
+    // une tranche et on invite à filtrer, plutôt que de faire attendre sans rien dire.
+    const PLAFOND = 200;
+    const lignes = toutes.slice(0, PLAFOND);
+    $("#table-ajust").innerHTML = (toutes.length > PLAFOND ? message("info",
+      `<b>${toutes.length} cours correspondent.</b> Seuls les ${PLAFOND} premiers sont affichés :
+       choisissez un élève, ou cochez un filtre, pour voir le reste.`) : "")
+      + (lignes.length ? `<div class="defile"><table>
       <tr><th>Élève</th><th>Quand</th><th>Matière</th><th class="num">Durée</th>
           <th>AESH actuel</th><th style="width:270px">Confier à</th></tr>
       ${lignes.map(c => `<tr>
@@ -1526,15 +1608,18 @@ async function ajustementAffectations() {
             <span class="ab" style="color:#5b6570">sem. ${c.parite}</span></td>
         <td style="font-size:12px">${ech(c.matiere)}</td>
         <td class="num">${c.duree} h</td>
-        <td>${c.impose ? "🔒 " : ""}${ech(c.aesh_nom)}</td>
+        <td>${c.impose ? "🔒 " : ""}${c.aesh_nom ? ech(c.aesh_nom)
+              : `<i style="color:#8a929b">personne</i>`}</td>
         <td><select class="imposer" data-c="${ech(c.cle)}" style="width:100%">
           <option value="">— laisser le calcul décider —</option>
-          <option value="${ech(c.aesh)}" ${c.impose === c.aesh ? "selected" : ""}>
-            ${ech(c.aesh_nom)} (actuel)</option>
+          ${c.aesh ? `<option value="${ech(c.aesh)}" ${c.impose === c.aesh ? "selected" : ""}>
+            🔒 ${ech(c.aesh_nom)} (actuel)</option>` : ""}
           ${c.alternatives.map(a => `<option value="${ech(a.id)}" ${c.impose === a.id ? "selected" : ""}>
-            ${ech(a.nom)}${a.libre ? " — libre" : " — occupé par " + ech(a.occupe_par.join(", "))}</option>`).join("")}
+            🔒 ${ech(a.nom)}${a.libre ? " — libre" : " — occupé par " + ech(a.occupe_par.join(", "))}</option>`).join("")}
+          <option value="${SANS_ACCOMPAGNEMENT}" ${c.impose === SANS_ACCOMPAGNEMENT ? "selected" : ""}>
+            🔒 personne — assumer ce cours sans accompagnement</option>
         </select></td></tr>`).join("")}
-    </table></div>` : message("info", "Aucun cours ne correspond à ce filtre.");
+    </table></div>` : message("info", "Aucun cours ne correspond à ce filtre."));
     document.querySelectorAll("select.imposer").forEach(sel => sel.onchange = async () => {
       try {
         const r = await api("/api/imposer", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -1552,7 +1637,356 @@ async function ajustementAffectations() {
   };
   $("#filtre-eleve").onchange = dessinerTable;
   $("#filtre-libre").onchange = dessinerTable;
+  $("#filtre-sans").onchange = dessinerTable;
   dessinerTable();
+}
+
+/* ── Grille hebdomadaire ─────────────────────────────────────────────────────────────────────
+ *
+ * Les blocs arrivent déjà fusionnés du serveur — demi-heures consécutives réunies, semaines A et B
+ * réunies quand elles portent le même cours. C'est le même découpage que les exports, volontairement :
+ * ce qu'on corrige à l'écran doit se retrouver tel quel à l'impression.
+ */
+function heureCreneau(ent, s) {
+  const m = ent.h_min * 60 + s * ent.pas_minutes;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
+}
+
+function grilleHTML(blocs, ent, rendre) {
+  const occupees = new Set(), depart = new Map();
+  blocs.forEach((b, i) => {
+    depart.set(`${b.debut}:${b.jour}:${b.colonne}`, [b, i]);
+    for (let l = b.debut; l < b.debut + b.hauteur; l++)
+      for (let k = 0; k < b.largeur; k++)
+        if (!(l === b.debut && k === 0)) occupees.add(`${l}:${b.jour}:${b.colonne + k}`);
+  });
+  // La plage du projet peut aller de 7 h à 22 h alors que les cours tiennent de 8 h à 18 h :
+  // on n'affiche pas une heure vide, elle n'apprend rien et éloigne le reste.
+  let premier = 0, dernier = ent.nb_creneaux - 1;
+  if (blocs.length) {
+    premier = Math.min(...blocs.map(b => b.debut));
+    dernier = Math.max(...blocs.map(b => b.debut + b.hauteur - 1));
+  }
+  const largeur = (88 / (ent.jours.length * 2)).toFixed(3);
+  let h = `<table class="edt"><colgroup><col style="width:70px">`
+        + `<col style="width:${largeur}%">`.repeat(ent.jours.length * 2)
+        + `</colgroup><tr><th rowspan="2">Horaires</th>`
+        + ent.jours.map(j => `<th colspan="2">${ech(j)}</th>`).join("")
+        + `</tr><tr>`
+        + ent.jours.map(() => `<th class="ab">sem. A</th><th class="ab">sem. B</th>`).join("")
+        + `</tr>`;
+  for (let s = premier; s <= dernier; s++) {
+    h += `<tr><td class="h">${heureCreneau(ent, s)}</td>`;
+    for (let jour = 0; jour < ent.jours.length; jour++)
+      for (const colonne of [0, 1]) {
+        if (occupees.has(`${s}:${jour}:${colonne}`)) continue;
+        const trouve = depart.get(`${s}:${jour}:${colonne}`);
+        if (!trouve) { h += "<td></td>"; continue; }
+        const [b, i] = trouve, rendu = rendre(b, i);
+        h += `<td${b.hauteur > 1 ? ` rowspan="${b.hauteur}"` : ""}`
+           + `${b.largeur > 1 ? ` colspan="${b.largeur}"` : ""}`
+           + ` ${rendu.attributs || ""} style="${rendu.style || ""}">${rendu.contenu}</td>`;
+      }
+    h += "</tr>";
+  }
+  return h + "</table>";
+}
+
+function legendeHTML(couleurs, noms, sansAccompagnement) {
+  const entrees = Object.entries(couleurs)
+    .map(([id, c]) => [noms[id] || id, c]).sort((a, b) => a[0].localeCompare(b[0], "fr"));
+  return `<div class="legende-edt">`
+    + entrees.map(([nom, c]) => `<span style="background:#${c}">${ech(nom)}</span>`).join("")
+    + (sansAccompagnement
+        ? `<span style="background:#E8EAED">sans accompagnement</span>`
+          + `<span style="background:#F4F5F6;color:#6b7279">hors accompagnement</span>` : "")
+    + `</div>`;
+}
+
+/* ── Vue « Élèves » : la seule où l'on modifie ─────────────────────────────────────────────── */
+
+async function vueElevesEDT() {
+  const d = EDT.donnees.eleves = await api("/api/tableau/eleves");
+  const zone = $("#contenu-edt");
+  if (!d.eleves.length) {
+    zone.innerHTML = message("info", "Aucun emploi du temps : importez les exports ProNote et "
+      + "choisissez les deux semaines types."); return;
+  }
+  if (!d.eleves.some(e => e.id === EDT.eleve)) EDT.eleve = d.eleves[0].id;
+  const eleve = d.eleves.find(e => e.id === EDT.eleve);
+  const index = d.eleves.indexOf(eleve);
+  const noms = {};
+  (POP?.aesh || []).forEach(a => noms[a.id] = a.nom_complet);
+  eleve.blocs.forEach(b => { if (b.aesh) noms[b.aesh] = b.aesh_nom; });
+  const verrouilles = eleve.blocs.filter(b => b.verrou).length;
+  const corriges = eleve.blocs.filter(b => b.retouche || b.ajoute).length;
+
+  zone.innerHTML = `
+    <div class="carte">
+      <div class="ligne">
+        <button class="action secondaire" id="edt-prec" ${index === 0 ? "disabled" : ""}>◀</button>
+        <select id="edt-eleve" style="min-width:290px;font-size:15px;padding:6px">
+          ${d.eleves.map(e => `<option value="${ech(e.id)}" ${e.id === EDT.eleve ? "selected" : ""}>
+            ${ech(e.nom)}${e.classe ? " — " + ech(e.classe) : ""}</option>`).join("")}
+        </select>
+        <button class="action secondaire" id="edt-suiv"
+          ${index === d.eleves.length - 1 ? "disabled" : ""}>▶</button>
+        <span style="color:#5b6570">
+          ${eleve.taux !== null && eleve.taux !== undefined
+            ? `couverture <b>${eleve.taux} %</b> — ${eleve.heures_couvertes} h sur ${eleve.heures_notifiees} h notifiées`
+            : `${eleve.heures_notifiees ?? "?"} h notifiées — pas encore calculé`}
+        </span>
+        <span style="margin-left:auto">
+          ${verrouilles ? `🔒 <b>${verrouilles}</b> cours verrouillé(s)` : "aucun verrou"}
+          ${corriges ? ` · ✎ <b>${corriges}</b> cours corrigé(s)` : ""}</span>
+      </div>
+      <div class="ligne" style="margin-top:10px">
+        <button class="action secondaire" id="edt-ajouter">Ajouter un cours…</button>
+        <button class="action secondaire" id="edt-verrouiller">Verrouiller tout ce qu'il a obtenu</button>
+        <button class="action secondaire" id="edt-liberer" ${verrouilles ? "" : "disabled"}>Libérer ses verrous</button>
+      </div>
+      <p class="aide" style="margin:10px 0 0">Cliquez sur un cours pour choisir qui l'accompagne, le
+        verrouiller, le déplacer ou le supprimer. <b>Choisir un AESH vaut verrou</b> : le calcul
+        suivant s'organisera autour, ou dira qu'il n'y arrive pas. Une case couvrant les deux
+        demi-colonnes vaut pour les semaines A et B ensemble.</p>
+      ${eleve.repli ? message("avert", "Cet élève n'avait aucun cours sur les deux semaines types : "
+        + "l'application est retombée sur ses deux semaines les plus fournies.") : ""}
+      ${eleve.retouches_sans_objet.length ? message("avert",
+        `<b>${eleve.retouches_sans_objet.length} correction(s) sans objet :</b> elles visaient des cours
+         qui ne sont plus dans l'export ProNote. Elles ne s'appliquent pas.`) : ""}
+      <div id="retour-edt"></div>
+      ${legendeHTML(d.couleurs, noms, true)}
+      <div id="grille-eleve"></div>
+    </div>`;
+
+  $("#grille-eleve").innerHTML = grilleHTML(eleve.blocs, d, (b, i) => {
+    const lignes = [b.matiere];
+    if (b.salle) lignes.push(b.salle);
+    if (b.accompagne) lignes.push((b.verrou ? "🔒 " : "") + b.aesh_nom);
+    else if (b.verrou) lignes.push("🔒 sans accompagnement");
+    else if (b.motif) lignes.push("(" + b.motif + ")");
+    return {
+      contenu: ech(lignes.join("\n")) + (b.retouche || b.ajoute
+        ? `<div style="font-size:9px;font-style:italic;color:#4a5258">${b.ajoute ? "ajouté" : "corrigé"}</div>` : ""),
+      style: `background:#${b.couleur}`,
+      attributs: `class="cours${b.motif ? " hors" : ""}" data-b="${i}"`,
+    };
+  });
+
+  const aller = id => { EDT.eleve = id; dessiner(); };
+  $("#edt-eleve").onchange = e => aller(e.target.value);
+  $("#edt-prec").onclick = () => aller(d.eleves[index - 1].id);
+  $("#edt-suiv").onclick = () => aller(d.eleves[index + 1].id);
+  $("#edt-ajouter").onclick = () => panneauCours(eleve, null, d);
+  $("#edt-verrouiller").onclick = () => enVerrous({action: "verrouiller", eleve: eleve.id});
+  $("#edt-liberer").onclick = () => enVerrous({action: "liberer", eleve: eleve.id});
+  document.querySelectorAll("#grille-eleve td.cours").forEach(td =>
+    td.onclick = () => panneauCours(eleve, eleve.blocs[+td.dataset.b], d));
+}
+
+async function enVerrous(corps) {
+  try {
+    await api("/api/verrous", {method: "POST", headers: {"Content-Type": "application/json"},
+                               body: JSON.stringify(corps)});
+    await majEtat(); dessiner();
+  } catch (e) { $("#retour-edt").innerHTML = erreurAffichee(e); }
+}
+
+/* ── Volet d'un cours : qui l'accompagne, et le cours lui-même ─────────────────────────────── */
+
+async function panneauCours(eleve, bloc, ent) {
+  const creation = !bloc;
+  const duree = bloc ? bloc.hauteur / 2 : 1;
+  const creneaux = [];
+  for (let s = 0; s < ent.nb_creneaux; s++) creneaux.push([s, heureCreneau(ent, s)]);
+
+  let cours = null;
+  if (bloc && !bloc.motif) {
+    try { cours = await api("/api/cours?cle=" + encodeURIComponent(bloc.cles[0])); }
+    catch (e) { cours = null; }
+  }
+
+  const boite = document.createElement("div");
+  boite.className = "voile";
+  const semaines = creation ? "" : (bloc.parites.length === 2 ? "semaines A et B"
+                                                             : "semaine " + bloc.parites[0]);
+  boite.innerHTML = `<div class="fenetre">
+    <h3 style="margin:0 0 4px">${creation ? "Ajouter un cours" : ech(bloc.matiere)}</h3>
+    <p class="aide" style="margin:0 0 14px">${ech(eleve.nom)}${creation ? "" : ` — ${ent.jours[bloc.jour]}
+      ${heureCreneau(ent, bloc.debut)}–${heureCreneau(ent, bloc.debut + bloc.hauteur)}, ${semaines}`}</p>
+    <div id="retour-panneau"></div>
+
+    ${creation ? "" : `<div class="carte" style="margin-bottom:14px">
+      <b>Accompagnement</b>
+      ${bloc.motif ? `<p class="aide" style="margin:6px 0 0">Ce cours n'est pas accompagné :
+          <b>${ech(bloc.motif)}</b>. Revenez sur ce choix dans « Élèves &amp; efforts » ou
+          « Pondérations &amp; règles » pour pouvoir y affecter quelqu'un.</p>`
+        : `<p class="aide" style="margin:6px 0 10px">Choisir quelqu'un — ou « personne » — <b>verrouille</b>
+             ce cours : le calcul suivant devra s'y plier. « Libre » signifie que l'AESH n'a rien à
+             ce moment-là ; « occupé » qu'il faudra déplacer ce qu'il y fait.</p>
+           <select id="panneau-aesh" style="width:100%;padding:7px;font-size:14px">
+             <option value="">— laisser le calcul décider —</option>
+             ${bloc.aesh ? `<option value="${ech(bloc.aesh)}" ${bloc.verrou === bloc.aesh ? "selected" : ""}>
+                🔒 ${ech(bloc.aesh_nom)} — garder cette affectation</option>` : ""}
+             ${(cours?.alternatives || []).map(a => `<option value="${ech(a.id)}"
+                ${bloc.verrou === a.id ? "selected" : ""}>🔒 ${ech(a.nom)}${a.libre ? " — libre"
+                : " — occupé par " + ech(a.occupe_par.join(", "))}</option>`).join("")}
+             <option value="${SANS_ACCOMPAGNEMENT}" ${bloc.verrou === SANS_ACCOMPAGNEMENT ? "selected" : ""}>
+               🔒 personne — assumer ce cours sans accompagnement</option>
+           </select>
+           ${!cours ? message("avert", "Les remplaçants possibles n'ont pas pu être chargés.") : ""}
+           ${cours && !cours.alternatives.length ? `<p class="aide" style="margin:8px 0 0">Aucun autre
+              AESH n'est disponible sur toute la durée de ce cours.</p>` : ""}`}
+    </div>`}
+
+    <div class="carte" style="margin-bottom:14px">
+      <b>${creation ? "Le cours à ajouter" : "Le cours"}</b>
+      <p class="aide" style="margin:6px 0 10px">${creation
+        ? "Un cours ajouté n'existe que dans ce projet : il ne remonte pas dans ProNote."
+        : "Corrige l'emploi du temps quand ProNote ne reflète plus la réalité. La correction est "
+          + "conservée et se réapplique après chaque nouvel import."}
+        La <b>famille de matières</b> décide de l'effort demandé à l'élève et des affinités des AESH ;
+        sans elle un cours ajouté serait classé « à classer », donc écarté de l'accompagnement. Elle
+        vaut pour cet intitulé partout dans le projet.</p>
+      <div class="grille-champs">
+        <label>Matière<input class="champ" id="p-matiere"
+          value="${creation ? "" : ech(bloc.matiere)}" placeholder="intitulé du cours"></label>
+        <label>Salle<input class="champ" id="p-salle" value="${creation ? "" : ech(bloc.salle)}"></label>
+        <label>Famille de matières<select class="champ" id="p-famille">
+          ${(E.familles || []).map(f => `<option value="${ech(f)}"
+            ${!creation && bloc.famille === f ? "selected" : ""}>${ech(f)}</option>`).join("")}
+        </select></label>
+        <label>Jour<select class="champ" id="p-jour">
+          ${ent.jours.map((j, i) => `<option value="${i}" ${!creation && bloc.jour === i ? "selected" : ""}>
+            ${ech(j)}</option>`).join("")}</select></label>
+        <label>Début<select class="champ" id="p-debut">
+          ${creneaux.map(([s, t]) => `<option value="${s}" ${!creation && bloc.debut === s ? "selected" : ""}>
+            ${t}</option>`).join("")}</select></label>
+        <label>Durée<select class="champ" id="p-duree">
+          ${Array.from({length: 20}, (_, k) => (k + 1) / 2).map(h => `<option value="${h}"
+            ${duree === h ? "selected" : ""}>${h} h</option>`).join("")}</select></label>
+        ${creation ? `<label>Semaines<select class="champ" id="p-parites">
+          <option value="AB">A et B (toutes les semaines)</option>
+          <option value="A">semaine A seulement</option>
+          <option value="B">semaine B seulement</option></select></label>` : ""}
+      </div>
+    </div>
+
+    <div class="ligne" style="justify-content:space-between">
+      <div class="ligne">
+        ${creation ? "" : `<button class="action secondaire" id="p-supprimer"
+            style="color:var(--rouge);border-color:var(--rouge)">Supprimer ce cours</button>`}
+        ${!creation && (bloc.retouche || bloc.ajoute) ? `<button class="action secondaire"
+            id="p-annuler-retouche">Revenir à ProNote</button>` : ""}
+      </div>
+      <div class="ligne">
+        <button class="action secondaire" id="p-fermer">Fermer</button>
+        <button class="action" id="p-enregistrer">${creation ? "Ajouter" : "Enregistrer"}</button>
+      </div>
+    </div></div>`;
+  document.body.appendChild(boite);
+  const fermer = () => boite.remove();
+  const echec = e => $("#retour-panneau", boite).innerHTML = erreurAffichee(e);
+  const recharger = async () => { fermer(); await majEtat(); dessiner(); };
+
+  $("#p-fermer", boite).onclick = fermer;
+  boite.onclick = e => { if (e.target === boite) fermer(); };
+
+  const selecteur = $("#panneau-aesh", boite);
+  if (selecteur) selecteur.onchange = async () => {
+    try {
+      await api("/api/imposer", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({cours: bloc.cles, aesh: selecteur.value || null})});
+      await recharger();
+    } catch (e) { echec(e); }
+  };
+
+  $("#p-enregistrer", boite).onclick = async () => {
+    const valeurs = {
+      matiere: $("#p-matiere", boite).value.trim(),
+      salle: $("#p-salle", boite).value.trim(),
+      jour: +$("#p-jour", boite).value,
+      debut: +$("#p-debut", boite).value,
+      duree: Math.round(+$("#p-duree", boite).value * 2),
+      famille: $("#p-famille", boite).value,
+    };
+    const parites = creation ? ($("#p-parites", boite).value === "AB" ? ["A", "B"]
+                                                                     : [$("#p-parites", boite).value]) : null;
+    try {
+      await api("/api/retouches", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({eleve: eleve.id, action: creation ? "ajouter" : "modifier",
+                              cles: creation ? [] : bloc.cles_retouche, valeurs, parites})});
+      await recharger();
+    } catch (e) { echec(e); }
+  };
+
+  const supprimer = $("#p-supprimer", boite);
+  if (supprimer) supprimer.onclick = async () => {
+    try {
+      await api("/api/retouches", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({eleve: eleve.id, action: "supprimer", cles: bloc.cles_retouche})});
+      await recharger();
+    } catch (e) { echec(e); }
+  };
+
+  const annuler = $("#p-annuler-retouche", boite);
+  if (annuler) annuler.onclick = async () => {
+    try {
+      await api("/api/retouches", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({eleve: eleve.id, action: "annuler", cles: bloc.cles_retouche})});
+      await recharger();
+    } catch (e) { echec(e); }
+  };
+}
+
+/* ── Vue « AESH » : lecture seule ──────────────────────────────────────────────────────────── */
+
+async function vueAeshEDT() {
+  const d = EDT.donnees.aesh = await api("/api/tableau/aesh");
+  const zone = $("#contenu-edt");
+  if (!d.aesh.length) {
+    zone.innerHTML = message("info", "Aucun AESH actif dans ce projet."); return; }
+  if (!d.aesh.some(a => a.id === EDT.aesh)) EDT.aesh = d.aesh[0].id;
+  const personne = d.aesh.find(a => a.id === EDT.aesh);
+  const index = d.aesh.indexOf(personne);
+  const noms = {};
+  (EDT.donnees.eleves?.eleves || []).forEach(e => noms[e.id] = e.nom);
+  personne.blocs.forEach(b => b.eleves.forEach(e => noms[e.id] = e.nom));
+
+  zone.innerHTML = `
+    <div class="carte">
+      <div class="ligne">
+        <button class="action secondaire" id="aesh-prec" ${index === 0 ? "disabled" : ""}>◀</button>
+        <select id="edt-aesh" style="min-width:290px;font-size:15px;padding:6px">
+          ${d.aesh.map(a => `<option value="${ech(a.id)}" ${a.id === EDT.aesh ? "selected" : ""}>
+            ${ech(a.nom)}</option>`).join("")}
+        </select>
+        <button class="action secondaire" id="aesh-suiv"
+          ${index === d.aesh.length - 1 ? "disabled" : ""}>▶</button>
+        <span style="color:#5b6570">quotité <b>${personne.quotite ?? "?"} h</b> —
+          <b>${personne.heures_affectees} h</b> affectées —
+          ${personne.heures_disponibles} h déclarées disponibles —
+          ${personne.eleves.length} élève(s)</span>
+      </div>
+      <p class="aide" style="margin:10px 0 0">Vue de lecture : les affectations se modifient dans
+        l'onglet « Élèves », où l'on voit la journée entière de l'élève qu'on déplace.</p>
+      ${legendeHTML(d.couleurs, noms, false)}
+      <div id="grille-aesh"></div>
+    </div>`;
+
+  $("#grille-aesh").innerHTML = grilleHTML(personne.blocs, d, b => {
+    const teintes = [...new Set(b.eleves.map(e => "#" + e.couleur))];
+    const style = teintes.length === 1 ? `background:${teintes[0]}`
+      : `background:repeating-linear-gradient(135deg,${teintes.map((t, i) =>
+          `${t} ${i * 14}px ${(i + 1) * 14}px`).join(",")})`;
+    return {contenu: ech(b.eleves.map(e =>
+      [e.nom, e.matiere, e.salle].filter(Boolean).join("\n")).join("\n— — —\n")), style};
+  });
+
+  const aller = id => { EDT.aesh = id; dessiner(); };
+  $("#edt-aesh").onchange = e => aller(e.target.value);
+  $("#aesh-prec").onclick = () => aller(d.aesh[index - 1].id);
+  $("#aesh-suiv").onclick = () => aller(d.aesh[index + 1].id);
 }
 
 async function dessiner() {

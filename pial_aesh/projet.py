@@ -27,7 +27,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import pronote as P
-from .affectation import POIDS_DEFAUT, Probleme, resoudre
+from .affectation import POIDS_DEFAUT, SANS_ACCOMPAGNEMENT, Probleme, resoudre
 from .matieres import FAMILLES, NON_CLASSE, Referentiel
 from .pial import lire_pial
 
@@ -50,6 +50,101 @@ def lignes_dispos(valeur):
     if isinstance(valeur, dict):
         return valeur.get("grille") or []
     return valeur or []
+
+
+def cle_retouche(parite, id_cours):
+    return f"{parite}|{id_cours}"
+
+
+def appliquer_retouches(creneaux, retouches):
+    """
+    Emploi du temps d'un élève après ses corrections manuelles.
+
+    ProNote a le dernier mot sur ce qui se passe réellement dans l'établissement, mais il n'a pas
+    toujours raison au moment où on travaille : un élève change de groupe, un cours est déplacé, un
+    créneau manque. Plutôt que de retoucher les exports — qu'un nouvel import écraserait — les
+    corrections vivent à côté, dans le projet, et se réappliquent à chaque lecture.
+
+    Une correction porte sur un cours entier, désigné par « <parité>|<identifiant ProNote> » :
+      · {"supprime": true}                       le cours disparaît de l'emploi du temps
+      · {"jour", "debut", "duree", "matiere", "salle"}   ce qui est fourni remplace l'original
+      · {"ajout": true, …}                       un cours que ProNote ne connaît pas
+
+    Retourne (créneaux corrigés, corrections devenues sans objet). Une correction qui viserait un
+    cours disparu de l'export n'est pas une erreur : elle est signalée, jamais appliquée de force.
+    """
+    if not retouches:
+        return creneaux, []
+
+    # Un cours occupe plusieurs demi-heures consécutives : on le reconstitue avant de le corriger,
+    # sinon « déplacer » n'aurait aucun sens à l'échelle d'un créneau isolé.
+    cours = {}
+    for (parite, jour, s), donnees in sorted(creneaux.items()):
+        entree = cours.setdefault(cle_retouche(parite, donnees["id_cours"]),
+                                  {"parite": parite, "jour": jour, "debut": s, "creneaux": [],
+                                   "cours": donnees})
+        entree["creneaux"].append(s)
+        entree["debut"] = min(entree["debut"], s)
+
+    orphelines = []
+    for cle, retouche in (retouches or {}).items():
+        if not isinstance(retouche, dict):
+            continue
+        if retouche.get("ajout"):
+            parite = (cle.split("|", 1) + [""])[0]
+            cours[cle] = {"parite": parite, "jour": int(retouche.get("jour", 0)),
+                          "debut": int(retouche.get("debut", 0)),
+                          "creneaux": list(range(int(retouche.get("debut", 0)),
+                                                 int(retouche.get("debut", 0))
+                                                 + max(1, int(retouche.get("duree", 1))))),
+                          "cours": {"id_cours": cle.split("|", 1)[-1],
+                                    "matiere": retouche.get("matiere") or "Cours ajouté",
+                                    "salle": retouche.get("salle") or "", "ajoute": True}}
+            continue
+        existant = cours.get(cle)
+        if not existant:
+            orphelines.append(cle)
+            continue
+        if retouche.get("supprime"):
+            cours.pop(cle)
+            continue
+        debut = int(retouche.get("debut", existant["debut"]))
+        duree = max(1, int(retouche.get("duree", len(existant["creneaux"]))))
+        existant["jour"] = int(retouche.get("jour", existant["jour"]))
+        existant["debut"] = debut
+        existant["creneaux"] = list(range(debut, debut + duree))
+        modifie = dict(existant["cours"])
+        for champ in ("matiere", "salle"):
+            if retouche.get(champ) is not None:
+                modifie[champ] = retouche[champ]
+        modifie["retouche"] = True
+        existant["cours"] = modifie
+
+    corriges = {}
+    for entree in cours.values():
+        for s in entree["creneaux"]:
+            corriges[(entree["parite"], entree["jour"], s)] = entree["cours"]
+    return corriges, orphelines
+
+
+def conflits_retouche(voisins, parite, jour, debut, duree):
+    """
+    Cours de l'élève qu'une correction viendrait chevaucher.
+
+    Un élève n'est qu'à un endroit à la fois : poser un cours par-dessus un autre ne produit pas un
+    emploi du temps discutable, il en produit un faux. On refuse donc avant d'enregistrer, en
+    nommant ce qui gêne — plutôt que de laisser le calcul trancher au hasard plus tard.
+
+    « voisins » est l'emploi du temps **privé du cours qu'on est en train de corriger** : c'est
+    indispensable, car deux cours posés sur le même créneau s'écraseraient l'un l'autre dans la
+    grille et le chevauchement deviendrait invisible.
+    """
+    gene = {}
+    for s in range(debut, debut + duree):
+        autre = voisins.get((parite, jour, s))
+        if autre:
+            gene[autre["id_cours"]] = autre.get("matiere") or autre["id_cours"]
+    return sorted(gene.values())
 
 
 class Projet:
@@ -85,6 +180,7 @@ class Projet:
             "max_aesh_par_eleve": 3,
             "pause": {"debut": 11, "fin": 14, "minutes": 60},
             "cours_imposes": {},
+            "retouches": {},         # corrections manuelles des emplois du temps, par élève
             "periodes": [],           # stages, journées d'intégration, CCF
             "resultats_periodes": {},  # affectation propre à chaque période
             "poids": dict(POIDS_DEFAUT), "efforts": {}, "affinites": {}, "paires": {},
@@ -230,39 +326,24 @@ class Projet:
         resultats.sort(key=lambda r: (not r["meme_date"], -r["score"]))
         return resultats[:limite]
 
-    def grilles(self, population=None):
+    def grilles_completes(self, population=None, avec_retouches=True):
         """
-        Emploi du temps type de chaque élève, selon les deux semaines choisies.
+        Emploi du temps type de chaque élève, corrections manuelles comprises, sans aucun filtre.
 
         Un élève sans aucun cours ces deux semaines-là (stage, arrivée tardive) n'est pas abandonné :
         on retombe sur ses deux semaines les plus fournies, en gardant l'alternance A/B alignée sur
         celle de l'établissement. Le repli est signalé, jamais silencieux.
 
-        Retourne (grilles, heures hors plage, replis) où « replis » liste les élèves concernés.
+        Retourne (grilles, heures hors plage, replis, corrections sans objet). Tous les cours y
+        figurent, y compris ceux qu'on a décidé de ne pas accompagner : c'est la vue de référence,
+        celle qu'on montre à l'écran. Le tri revient à `grilles()`.
         """
         population = population or self.population()
         h_min, h_max = self.etat.get("plage") or PLAGE_DEFAUT
         semaines = self.etat.get("semaines_types") or []
-        grilles, hors_plage, replis = {}, 0, []
+        grilles, hors_plage, replis, sans_objet = {}, 0, [], {}
         if not semaines:
-            return grilles, hors_plage, replis
-        # Matières retirées de l'accompagnement : globalement (familles décochées) ou pour un élève
-        # donné (effort mis à 0). Le retrait se fait ici, à la source : ces créneaux disparaissent de
-        # l'emploi du temps à couvrir, donc du besoin de l'élève et du taux de couverture — sinon on
-        # lui reprocherait éternellement des heures qu'on a nous-mêmes décidé de ne pas accompagner.
-        exclues = set(self.etat.get("matieres_exclues") or [])
-        efforts = self.etat.get("efforts") or {}
-        referentiel = self.referentiel
-
-        def accompagne(id_eleve, cours):
-            # « DISPENSE — Présence facultative » : l'élève n'est pas tenu de venir, l'accompagner
-            # n'aurait pas de sens et consommerait des heures utiles ailleurs.
-            if cours.get("dispense"):
-                return False
-            famille = referentiel.famille(cours["matiere"])
-            if famille in exclues:
-                return False
-            return efforts.get(id_eleve, {}).get(famille) != 0
+            return grilles, hors_plage, replis, sans_objet
         for eleve in population["eleves"]:
             cours = population["cours"].get(eleve["id"])
             if not cours:
@@ -280,10 +361,44 @@ class Projet:
             creneaux = {}
             for (jour, s), case in grille.items():
                 for parite in ("A", "B"):
-                    if case[parite] and accompagne(eleve["id"], case[parite][0]):
+                    if case[parite]:
                         creneaux[(parite, jour, s)] = case[parite][0]
+            # Les corrections manuelles s'appliquent avant tout le reste : elles font partie de
+            # l'emploi du temps, au même titre que ce qui vient de ProNote.
+            if avec_retouches:
+                creneaux, orphelines = appliquer_retouches(
+                    creneaux, (self.etat.get("retouches") or {}).get(eleve["id"]))
+                if orphelines:
+                    sans_objet[eleve["id"]] = orphelines
             grilles[eleve["id"]] = creneaux
             hors_plage += len(hors_grille)
+        return grilles, hors_plage, replis, sans_objet
+
+    def motif_non_accompagne(self, id_eleve, cours):
+        """
+        Pourquoi ce cours ne compte pas dans le besoin de l'élève — ou None s'il y compte.
+
+        Trois raisons seulement, et toutes assumées ailleurs dans l'application : une dispense
+        signalée par ProNote, une famille de matières retirée pour tout le monde, ou un effort mis à
+        zéro pour cet élève-là. Les nommer permet à l'écran des emplois du temps de montrer ces
+        cours en grisé avec leur motif, au lieu de les faire disparaître sans explication.
+        """
+        if cours.get("dispense"):
+            return "dispense — présence facultative"
+        famille = self.referentiel.famille(cours["matiere"])
+        if famille in set(self.etat.get("matieres_exclues") or []):
+            return "matière retirée de l'accompagnement"
+        if (self.etat.get("efforts") or {}).get(id_eleve, {}).get(famille) == 0:
+            return "effort mis à 0 pour cet élève"
+        return None
+
+    def grilles(self, population=None):
+        """Emplois du temps ne retenant que les cours à accompagner — ce que voit le calcul."""
+        population = population or self.population()
+        brutes, hors_plage, replis, _ = self.grilles_completes(population)
+        grilles = {id_eleve: {cle: cours for cle, cours in creneaux.items()
+                              if not self.motif_non_accompagne(id_eleve, cours)}
+                   for id_eleve, creneaux in brutes.items()}
         return grilles, hors_plage, replis
 
     def heures_retirees(self, population=None):
@@ -446,45 +561,64 @@ class Projet:
 
     def alternatives_affectation(self, population=None):
         """
-        Pour chaque cours affecté, les AESH qui pourraient le prendre à la place.
+        Chaque cours à accompagner, qui s'en charge, et qui pourrait s'en charger.
 
-        Un AESH est proposé s'il est disponible sur **toute** la durée du cours et n'est pas interdit
-        pour cet élève. On indique s'il est libre à ce moment-là ou déjà occupé : dans le second cas
-        l'échange reste possible, mais le calcul devra déplacer son cours actuel, et il dira s'il n'y
+        Tous les cours y figurent, y compris ceux que personne n'accompagne : c'est précisément
+        là qu'on a besoin de pouvoir désigner quelqu'un à la main. Un AESH n'est proposé que s'il
+        est disponible sur **toute** la durée du cours, n'est pas interdit pour cet élève et ne
+        refuse pas la matière — les trois mêmes conditions que le calcul, sans quoi on proposerait
+        des affectations que le solveur déclarerait ensuite impossibles.
+
+        « libre » distingue celui qui n'a rien à ce moment-là de celui qui est déjà pris : le second
+        reste choisissable, mais le calcul devra déplacer son cours actuel, et il dira s'il n'y
         arrive pas. On ne tranche pas ici — seul le solveur sait si l'ensemble reste cohérent.
         """
-        resultat = self.etat.get("resultat") or {}
-        if not resultat.get("affectations"):
-            return []
         population = population or self.population()
+        grilles, _, _ = self.grilles(population)
+        if not grilles:
+            return []
+        resultat = self.etat.get("resultat") or {}
         desactives = set(self.etat.get("aesh_desactives", []))
         aesh = [a for a in population["aesh"] if a["id"] not in desactives]
         dispos = {a["id"]: self.disponibilites(a["id"]) for a in aesh}
-        noms = {a["id"]: a["nom_complet"] for a in aesh}
         paires = self.etat.get("paires") or {}
+        affinites = self.etat.get("affinites") or {}
         imposes = self.etat.get("cours_imposes") or {}
+        noms_eleves = {e["id"]: e["nom_complet"] for e in population["eleves"]}
 
-        cours, occupation = {}, defaultdict(dict)
-        for a in resultat["affectations"]:
-            cle = (a["eleve"], a["parite"], a["id_cours"])
-            entree = cours.setdefault(cle, {"eleve": a["eleve"], "eleve_nom": a["eleve_nom"],
-                                            "parite": a["parite"], "jour": a["jour"],
-                                            "matiere": a["matiere"], "salle": a.get("salle", ""),
-                                            "aesh": a["aesh"], "aesh_nom": a["aesh_nom"],
-                                            "creneaux": []})
-            entree["creneaux"].append(a["creneau"])
+        # Ce que le calcul a retenu, et ce que chaque AESH fait à chaque demi-heure.
+        affecte, occupation = {}, defaultdict(dict)
+        for a in resultat.get("affectations") or []:
+            affecte[(a["eleve"], a["parite"], a["id_cours"])] = (a["aesh"], a["aesh_nom"])
             occupation[a["aesh"]][(a["parite"], a["jour"], a["creneau"])] = a["eleve_nom"]
+
+        # Les cours viennent des emplois du temps, pas du résultat : sinon les cours non couverts
+        # — les seuls sur lesquels on ait vraiment envie d'intervenir — seraient absents.
+        cours = {}
+        for id_eleve, creneaux in grilles.items():
+            for (parite, jour, creneau), donnees in creneaux.items():
+                cle = (id_eleve, parite, donnees["id_cours"])
+                entree = cours.setdefault(cle, {
+                    "eleve": id_eleve, "eleve_nom": noms_eleves.get(id_eleve, id_eleve),
+                    "parite": parite, "jour": jour, "matiere": donnees["matiere"],
+                    "salle": donnees.get("salle", ""), "creneaux": [],
+                    "retouche": bool(donnees.get("retouche") or donnees.get("ajoute"))})
+                entree["creneaux"].append(creneau)
 
         sortie = []
         for cle, info in sorted(cours.items(), key=lambda kv: (kv[1]["eleve_nom"], kv[1]["jour"],
-                                                               min(kv[1]["creneaux"]))):
+                                                              min(kv[1]["creneaux"]))):
             creneaux = sorted(info["creneaux"])
             requis = [(info["jour"], c) for c in creneaux]
+            famille = self.referentiel.famille(info["matiere"])
+            id_actuel, nom_actuel = affecte.get(cle, ("", ""))
             propositions = []
             for personne in aesh:
-                if personne["id"] == info["aesh"]:
+                if personne["id"] == id_actuel:
                     continue
                 if (paires.get(f"{personne['id']}|{info['eleve']}") or 0) <= -2:
+                    continue
+                if affinites.get(personne["id"], {}).get(famille) == 0:
                     continue
                 if not all(r in dispos[personne["id"]] for r in requis):
                     continue
@@ -494,15 +628,143 @@ class Projet:
                 propositions.append({"id": personne["id"], "nom": personne["nom_complet"],
                                      "libre": not pris, "occupe_par": sorted(pris)})
             propositions.sort(key=lambda p: (not p["libre"], p["nom"]))
+            texte = f"{cle[0]}|{cle[1]}|{cle[2]}"
             sortie.append({
-                "cle": f"{cle[0]}|{cle[1]}|{cle[2]}",
+                "cle": texte,
                 **{k: v for k, v in info.items() if k != "creneaux"},
+                "aesh": id_actuel, "aesh_nom": nom_actuel,
                 "creneaux": creneaux,
+                "debut": creneaux[0],
                 "duree": round(len(creneaux) / 2, 1),
-                "impose": imposes.get(f"{cle[0]}|{cle[1]}|{cle[2]}"),
+                "impose": imposes.get(texte),
                 "alternatives": propositions,
             })
         return sortie
+
+    # ───────────────────────────── Retouches d'emploi du temps ─────────────────────────────
+
+    def perimer_resultat(self):
+        """
+        Note que le dernier calcul ne correspond plus à ce qui est demandé.
+
+        Un verrou posé ou un cours déplacé ne change pas le résultat affiché : il change ce que le
+        résultat devrait être. Sans ce repère, on lit un emploi du temps en croyant qu'il tient
+        compte de la décision qu'on vient de prendre. L'avertissement survit au rechargement de la
+        page parce qu'il est dans le projet, pas dans le navigateur.
+        """
+        if self.etat.get("resultat"):
+            self.etat["resultat_perime"] = True
+            self.enregistrer()
+
+    def retouches_de(self, id_eleve):
+        return dict((self.etat.get("retouches") or {}).get(id_eleve) or {})
+
+    def _enregistrer_retouches(self, id_eleve, retouches):
+        toutes = dict(self.etat.get("retouches") or {})
+        if retouches:
+            toutes[id_eleve] = retouches
+        else:
+            toutes.pop(id_eleve, None)
+        self.etat["retouches"] = toutes
+        self.enregistrer()
+
+    def nb_creneaux(self):
+        h_min, h_max = self.etat.get("plage") or PLAGE_DEFAUT
+        return (h_max - h_min) * 60 // P.PAS_MINUTES
+
+    def retoucher(self, id_eleve, cles, action, valeurs=None, parites=None, population=None):
+        """
+        Corrige l'emploi du temps d'un élève : déplacer, redimensionner, supprimer, ajouter un cours.
+
+        La correction porte sur un cours entier et sur les semaines qu'on lui désigne — un cours
+        hebdomadaire se corrige dans les deux d'un seul geste, un cours de quinzaine dans la sienne
+        seulement. Rien n'est enregistré si le résultat placerait l'élève à deux endroits en même
+        temps : on nomme alors le cours qui gêne, car un emploi du temps impossible ne se rattrape
+        pas au calcul suivant.
+        """
+        valeurs = valeurs or {}
+        # Emploi du temps d'origine : les corrections s'appliquent dessus, jamais l'une sur l'autre.
+        brutes, _, _, _ = self.grilles_completes(population, avec_retouches=False)
+        origine = brutes.get(id_eleve) or {}
+        retouches = self.retouches_de(id_eleve)
+        limite = self.nb_creneaux()
+
+        if action == "annuler":
+            for cle in cles:
+                retouches.pop(cle, None)
+            self._enregistrer_retouches(id_eleve, retouches)
+            return {"retouches": retouches}
+
+        if action == "supprimer":
+            for cle in cles:
+                if cle.split("|", 1)[-1].startswith("ajout-"):
+                    retouches.pop(cle, None)      # un cours ajouté se retire, il ne se masque pas
+                else:
+                    retouches[cle] = {"supprime": True}
+            self._enregistrer_retouches(id_eleve, retouches)
+            return {"retouches": retouches}
+
+        # Un cours ajouté porte un intitulé que ProNote ne connaît pas : sans famille de matières,
+        # il retombe dans « à classer », famille écartée d'office, et disparaît du calcul sans que
+        # personne ne comprenne pourquoi. La famille est donc demandée et enregistrée dans le même
+        # référentiel que les corrections de l'écran « Élèves » — le solveur, les efforts, les
+        # affinités et les exports la voient tous.
+        famille = (valeurs.get("famille") or "").strip()
+        libelle = (valeurs.get("matiere") or "").strip()
+        if (famille and libelle and famille in FAMILLES
+                and self.referentiel.famille(libelle) != famille):
+            # Seulement si cela change quelque chose : réenregistrer une famille déjà déduite
+            # ferait apparaître la matière comme « corrigée à la main » dans l'écran « Élèves ».
+            corrections = dict(self.etat.get("corrections_matieres") or {})
+            corrections[libelle] = famille
+            self.etat["corrections_matieres"] = corrections
+
+        jour = int(valeurs.get("jour", 0))
+        debut = int(valeurs.get("debut", 0))
+        duree = max(1, int(valeurs.get("duree", 1)))
+        if not 0 <= jour < len(P.JOURS[:5]):
+            raise ValueError("Jour hors de la semaine.")
+        if debut < 0 or debut + duree > limite:
+            h_min = (self.etat.get("plage") or PLAGE_DEFAUT)[0]
+            raise ValueError(f"Ce cours sortirait de la plage horaire du projet "
+                             f"({h_min} h – {(self.etat.get('plage') or PLAGE_DEFAUT)[1]} h). "
+                             f"Élargissez la plage dans « Établissement » ou raccourcissez le cours.")
+
+        if action == "ajouter":
+            parites = parites or ["A", "B"]
+            numero = 1 + max([int(c.rsplit("-", 1)[-1]) for c in retouches
+                              if c.split("|", 1)[-1].startswith("ajout-")
+                              and c.rsplit("-", 1)[-1].isdigit()] or [0])
+            cles = [cle_retouche(parite, f"ajout-{numero}") for parite in parites]
+            for cle in cles:
+                retouches[cle] = {"ajout": True, "jour": jour, "debut": debut, "duree": duree,
+                                  "matiere": valeurs.get("matiere") or "Cours ajouté",
+                                  "salle": valeurs.get("salle") or ""}
+        elif action == "modifier":
+            for cle in cles:
+                base = dict(retouches.get(cle) or {})
+                base.update({"jour": jour, "debut": debut, "duree": duree})
+                base.pop("supprime", None)
+                for champ in ("matiere", "salle"):
+                    if valeurs.get(champ) is not None:
+                        base[champ] = valeurs[champ]
+                retouches[cle] = base
+        else:
+            raise ValueError(f"Action inconnue : {action}")
+
+        # On vérifie contre l'emploi du temps tel qu'il sera, le cours corrigé mis de côté.
+        voisins, _ = appliquer_retouches(
+            {k: v for k, v in origine.items()
+             if cle_retouche(k[0], v["id_cours"]) not in cles},
+            {k: v for k, v in retouches.items() if k not in cles})
+        for cle in cles:
+            parite = cle.split("|", 1)[0]
+            gene = conflits_retouche(voisins, parite, jour, debut, duree)
+            if gene:
+                raise ValueError(f"En semaine {parite}, ce créneau est déjà occupé par : "
+                                 f"{', '.join(gene)}. Déplacez ou supprimez d'abord ce cours-là.")
+        self._enregistrer_retouches(id_eleve, retouches)
+        return {"retouches": retouches}
 
     # ───────────────────────────── Périodes particulières ─────────────────────────────
     #
@@ -638,9 +900,6 @@ class Projet:
 
         h_min, h_max = self.etat.get("plage") or PLAGE_DEFAUT
         absents = set(periode.get("eleves") or []) if periode.get("type") in ("stage", "integration", "autre") else set()
-        exclues = set(self.etat.get("matieres_exclues") or [])
-        efforts = self.etat.get("efforts") or {}
-        referentiel = self.referentiel
         grilles, sans_cours = {}, []
         for eleve in population["eleves"]:
             if eleve["id"] in absents:
@@ -652,14 +911,15 @@ class Projet:
             creneaux = {}
             for (jour, s), case in grille.items():
                 for parite in ("A", "B"):
-                    if not case[parite]:
-                        continue
-                    cours_case = case[parite][0]
-                    famille = referentiel.famille(cours_case["matiere"])
-                    if (cours_case.get("dispense") or famille in exclues
-                            or efforts.get(eleve["id"], {}).get(famille) == 0):
-                        continue
-                    creneaux[(parite, jour, s)] = cours_case
+                    if case[parite]:
+                        creneaux[(parite, jour, s)] = case[parite][0]
+            # Une correction d'emploi du temps vaut aussi pendant un stage ou un CCF : elle décrit
+            # la réalité de l'élève, pas une préférence de calcul. Elle porte sur l'identifiant du
+            # cours, stable d'une semaine à l'autre, donc elle s'applique ici sans rien changer.
+            creneaux, _ = appliquer_retouches(
+                creneaux, (self.etat.get("retouches") or {}).get(eleve["id"]))
+            creneaux = {cle: donnees for cle, donnees in creneaux.items()
+                        if not self.motif_non_accompagne(eleve["id"], donnees)}
             if creneaux:
                 grilles[eleve["id"]] = creneaux
             else:
@@ -765,6 +1025,7 @@ class Projet:
             cours_obligatoires=self.cours_obligatoires()), exigence=exigence, journal=journal)
         resultat["calcule_le"] = maintenant()
         self.etat["resultat"] = resultat
+        self.etat["resultat_perime"] = False
         self.enregistrer()
         return resultat
 

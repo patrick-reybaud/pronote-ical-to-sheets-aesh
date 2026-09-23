@@ -21,7 +21,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 from . import export
-from .affectation import POIDS_DEFAUT, REGLES_DURES, REGLES_SOUPLES
+from . import tableau
+from .affectation import POIDS_DEFAUT, REGLES_DURES, REGLES_SOUPLES, SANS_ACCOMPAGNEMENT
 from .matieres import EFFORTS_PAR_DEFAUT, FAMILLES, NON_CLASSE
 from .affectation import EXIGENCES
 from .projet import (DOSSIER_PROJETS, Projet, exporter_projet, importer_projet,
@@ -586,20 +587,107 @@ def api_alternatives():
 
 @application.post("/api/imposer")
 def api_imposer():
-    """Confie un cours à un AESH donné (ou retire l'imposition), puis laisse relancer le calcul."""
+    """
+    Verrouille un cours sur un AESH — ou sur personne — et laisse relancer le calcul.
+
+    Un verrou est une décision, pas une préférence : le calcul suivant s'organisera autour, ou dira
+    qu'il n'y arrive pas. Plusieurs cours peuvent être verrouillés d'un seul appel, ce qui permet de
+    figer d'un geste tout ce qu'un élève a obtenu.
+    """
     projet = projet_courant()
     corps = request.json or {}
-    cle, id_aesh = corps.get("cours"), corps.get("aesh")
-    if not cle:
-        raise Erreur("Cours non précisé.")
+    cles = corps.get("cours") or []
+    if isinstance(cles, str):
+        cles = [cles]
+    if not cles:
+        raise Erreur("Aucun cours indiqué.")
+    id_aesh = corps.get("aesh")
+    if id_aesh and id_aesh != SANS_ACCOMPAGNEMENT:
+        connus = {a["id"] for a in projet.population()["aesh"]}
+        if id_aesh not in connus:
+            raise Erreur("Cet AESH ne fait pas partie de l'établissement retenu.")
     imposes = dict(projet.etat.get("cours_imposes") or {})
-    if id_aesh:
-        imposes[cle] = id_aesh
-    else:
-        imposes.pop(cle, None)
+    for cle in cles:
+        if id_aesh:
+            imposes[cle] = id_aesh
+        else:
+            imposes.pop(cle, None)
     projet.etat["cours_imposes"] = imposes
+    projet.perimer_resultat()
     projet.enregistrer()
-    return jsonify({"cours_imposes": imposes})
+    return jsonify({"cours_imposes": imposes, "resultat_perime": True})
+
+
+@application.post("/api/verrous")
+def api_verrous():
+    """Verrouille ou libère d'un coup tout ce qu'un élève — ou tout le monde — a obtenu."""
+    projet = projet_courant()
+    corps = request.json or {}
+    action, id_eleve = corps.get("action"), corps.get("eleve")
+    resultat = projet.etat.get("resultat") or {}
+    imposes = dict(projet.etat.get("cours_imposes") or {})
+    if action == "verrouiller":
+        if not resultat.get("affectations"):
+            raise Erreur("Il n'y a rien à verrouiller : lancez d'abord un calcul.")
+        for a in resultat["affectations"]:
+            if id_eleve and a["eleve"] != id_eleve:
+                continue
+            imposes[f"{a['eleve']}|{a['parite']}|{a['id_cours']}"] = a["aesh"]
+    elif action == "liberer":
+        # Sans élève désigné, on libère tout : c'est le sens de « tout déverrouiller ».
+        imposes = ({cle: v for cle, v in imposes.items() if cle.split("|", 1)[0] != id_eleve}
+                   if id_eleve else {})
+    else:
+        raise Erreur("Action inconnue : indiquez « verrouiller » ou « liberer ».")
+    projet.etat["cours_imposes"] = imposes
+    projet.perimer_resultat()
+    projet.enregistrer()
+    return jsonify({"cours_imposes": imposes, "resultat_perime": True})
+
+
+@application.get("/api/tableau/<vue>")
+def api_tableau(vue):
+    """Emplois du temps affichés à l'écran — côté élèves (modifiable) ou côté AESH (lecture)."""
+    projet = projet_courant()
+    resultat = projet.etat.get("resultat") or {}
+    if vue == "eleves":
+        return jsonify(tableau.tableau_eleves(projet, resultat))
+    if vue == "aesh":
+        return jsonify(tableau.tableau_aesh(projet, resultat))
+    raise Erreur(f"Vue inconnue : {vue}")
+
+
+@application.get("/api/cours")
+def api_cours():
+    """
+    Un cours et les AESH qui pourraient s'en charger — ce qu'affiche le volet d'une case.
+
+    La clé passe par la requête et non par le chemin : elle contient l'identifiant de l'élève tel
+    que le fichier PIAL le donne, sur lequel on n'a aucune garantie de forme.
+    """
+    projet = projet_courant()
+    cle = request.args.get("cle", "")
+    for entree in projet.alternatives_affectation():
+        if entree["cle"] == cle:
+            return jsonify(entree)
+    raise Erreur("Ce cours n'est plus dans l'emploi du temps. Rechargez l'écran.")
+
+
+@application.post("/api/retouches")
+def api_retouches():
+    """Corrige l'emploi du temps d'un élève : déplacer, redimensionner, supprimer, ajouter."""
+    projet = projet_courant()
+    corps = request.json or {}
+    id_eleve = corps.get("eleve")
+    if not id_eleve:
+        raise Erreur("Élève non précisé.")
+    try:
+        retour = projet.retoucher(id_eleve, corps.get("cles") or [], corps.get("action"),
+                                  corps.get("valeurs"), corps.get("parites"))
+    except ValueError as e:
+        raise Erreur(str(e))
+    projet.perimer_resultat()
+    return jsonify({**retour, "resultat_perime": True})
 
 
 @application.get("/api/export/<format>")
