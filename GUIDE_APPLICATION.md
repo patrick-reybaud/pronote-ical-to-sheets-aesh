@@ -188,9 +188,27 @@ en commun — c'est là que se voient les gains possibles. Chaque couple peut ê
 « incompatibles » (deux élèves qu'on ne peut pas regrouper) ou « à regrouper » (à privilégier).
 
 ### 6 ter · Stages, journées d'intégration & CCF
-**ProNote n'exporte rien de tout cela.** Les seules catégories présentes dans un export sont les
-cours, les vacances et les jours fériés : ni stage, ni PFMP, ni CCF, ni journée d'intégration. Ces
-périodes sont donc déclarées ici — nom, type, dates, élèves concernés.
+
+**Ce que ProNote exporte vraiment.** Vérifié sur 1 120 fichiers et 153 771 événements :
+
+| | Dans l'export ? | Comment |
+|---|---|---|
+| Stage / PFMP | **non** | aucune occurrence — seule trace : l'élève n'a aucun cours |
+| CCF | **non** | aucune occurrence |
+| Journée d'intégration | **oui** | libellé `JOURNEE D'INTEGRATION`, catégorie `Cours - Exceptionnel` |
+| Sortie pédagogique | **oui** | catégorie `Sorties Pédagogiques` |
+| Dispense (présence facultative) | **oui** | libellé `DISPENSE - Présence Facultative : …` |
+
+Le bouton **Proposer d'après les exports ProNote** exploite ces signatures : il propose les journées
+d'intégration et les sorties pédagogiques telles qu'elles sont écrites, et signale les **absences
+longues** — un élève sans aucun cours pendant une ou plusieurs semaines entières alors que les
+autres en ont — qui sont l'indice d'un stage. Rien n'est appliqué d'office : ce sont des
+propositions, à confirmer et à nommer.
+
+Les **dispenses** sont traitées automatiquement : un cours en présence facultative ne crée aucun
+besoin d'accompagnement et ne consomme donc pas d'heures.
+
+Le reste — stages et CCF — se déclare ici : nom, type, dates, élèves concernés.
 
 Pendant un **stage** ou une **journée d'intégration**, les élèves concernés ne sont pas accompagnés,
 et leurs AESH sont **redistribués sur les autres élèves** : chaque période reçoit sa propre

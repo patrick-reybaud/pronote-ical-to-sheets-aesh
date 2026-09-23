@@ -494,6 +494,18 @@ def api_periodes():
                                for e in population["eleves"]]})
 
 
+@application.get("/api/periodes/detecter")
+def api_detecter_periodes():
+    """Périodes candidates déduites des exports ProNote — propositions, jamais appliquées d'office."""
+    projet = projet_courant()
+    population = projet.population()
+    noms = {e["id"]: e["nom_complet"] for e in population["eleves"]}
+    propositions = []
+    for p in projet.periodes_detectees(population):
+        propositions.append({**p, "noms": [noms.get(i, i) for i in p["eleves"]]})
+    return jsonify({"propositions": propositions})
+
+
 @application.post("/api/periodes")
 def api_enregistrer_periodes():
     projet = projet_courant()

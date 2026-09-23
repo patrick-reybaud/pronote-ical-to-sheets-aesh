@@ -34,6 +34,12 @@ PAS_MINUTES = 30
 RE_NOM_ICS = re.compile(r"^Calendrier_(.+)_(\d{2})(\d{2})(\d{4})\.ics$", re.IGNORECASE)
 RE_UID_COURS = re.compile(r"Cours-(\d+)-")
 
+# ProNote n'exporte ni les stages ni les CCF. En revanche il exporte, sous forme de cours ordinaires
+# ou de catégories particulières, trois situations qui changent le besoin d'accompagnement :
+RE_DISPENSE = re.compile(r"^\s*DISPENSE\b", re.IGNORECASE)          # présence facultative
+RE_INTEGRATION = re.compile(r"INTEGRATION", re.IGNORECASE)           # journée d'intégration
+CATEGORIE_SORTIE = "Sorties"                                          # sortie pédagogique
+
 
 def compacter(texte):
     texte = unicodedata.normalize("NFKD", str(texte or "")).encode("ascii", "ignore").decode()
@@ -127,9 +133,15 @@ def _en_heure_paris(dt):
 
 
 def lire_ics(chemin):
-    """(cours, journées entières). Chaque cours porte son identifiant ProNote (« id_cours »)."""
+    """
+    (cours, journées entières, sorties pédagogiques).
+
+    Chaque cours porte son identifiant ProNote (« id_cours ») et deux drapeaux lus dans le libellé :
+    « dispense » (présence facultative) et « integration » (journée d'intégration). Les sorties
+    pédagogiques sont retournées à part : ce ne sont pas des cours, mais elles occupent l'élève.
+    """
     cal = Calendar.from_ical(Path(chemin).read_bytes())
-    cours, journees = [], []
+    cours, journees, sorties = [], [], []
     for ev in cal.walk("VEVENT"):
         categorie = ev.get("categories")
         categorie = categorie.to_ical().decode("utf-8", "ignore") if categorie is not None else ""
@@ -142,6 +154,9 @@ def lire_ics(chemin):
                              "debut": debut.isoformat(), "fin": fin_incluse.isoformat()})
             continue
         if not categorie.startswith("Cours"):
+            if CATEGORIE_SORTIE in categorie:
+                sorties.append({"debut": _en_heure_paris(debut), "fin": _en_heure_paris(fin),
+                                "libelle": resume, "categorie": categorie})
             continue
         infos = _infos_description(str(ev.get("description", "")))
         uid = str(ev.get("uid", ""))
@@ -158,9 +173,13 @@ def lire_ics(chemin):
             "groupe": groupe,
             "classe": infos.get("CLASSE") or infos.get("CLASSES") or "",
             "precision": categorie[len("Cours"):].strip(" -"),
+            # Présence facultative : l'élève peut ne pas venir, l'accompagner n'a pas de sens.
+            "dispense": bool(RE_DISPENSE.match(resume)),
+            # Journée d'intégration : exportée comme un cours exceptionnel, mais ce n'en est pas un.
+            "integration": bool(RE_INTEGRATION.search(resume)),
         })
     cours.sort(key=lambda c: c["debut"])
-    return cours, journees
+    return cours, journees, sorties
 
 
 def texte_cours(c, avec_prof=True):

@@ -61,6 +61,7 @@ class Projet:
         neuf = not self.chemin.exists()
         self.etat = self._charger()
         self._cache_ics = {}
+        self._cache_sorties = {}
         if neuf:
             # Un projet créé mais jamais modifié n'existait que dans la mémoire du serveur : il
             # n'apparaissait pas dans la liste et ne pouvait pas être supprimé. On l'inscrit tout de suite.
@@ -136,8 +137,14 @@ class Projet:
 
     def cours_de(self, chemin):
         if chemin not in self._cache_ics:
-            self._cache_ics[chemin] = P.lire_ics(chemin)[0]
+            cours, _, sorties = P.lire_ics(chemin)
+            self._cache_ics[chemin] = cours
+            self._cache_sorties[chemin] = sorties
         return self._cache_ics[chemin]
+
+    def sorties_de(self, chemin):
+        self.cours_de(chemin)
+        return self._cache_sorties.get(chemin, [])
 
     # ───────────────────────────── Analyse ─────────────────────────────
 
@@ -247,8 +254,12 @@ class Projet:
         efforts = self.etat.get("efforts") or {}
         referentiel = self.referentiel
 
-        def accompagne(id_eleve, matiere):
-            famille = referentiel.famille(matiere)
+        def accompagne(id_eleve, cours):
+            # « DISPENSE — Présence facultative » : l'élève n'est pas tenu de venir, l'accompagner
+            # n'aurait pas de sens et consommerait des heures utiles ailleurs.
+            if cours.get("dispense"):
+                return False
+            famille = referentiel.famille(cours["matiere"])
             if famille in exclues:
                 return False
             return efforts.get(id_eleve, {}).get(famille) != 0
@@ -269,7 +280,7 @@ class Projet:
             creneaux = {}
             for (jour, s), case in grille.items():
                 for parite in ("A", "B"):
-                    if case[parite] and accompagne(eleve["id"], case[parite][0]["matiere"]):
+                    if case[parite] and accompagne(eleve["id"], case[parite][0]):
                         creneaux[(parite, jour, s)] = case[parite][0]
             grilles[eleve["id"]] = creneaux
             hors_plage += len(hors_grille)
@@ -506,6 +517,84 @@ class Projet:
     TYPES_PERIODE = {"stage": "Stage / PFMP", "integration": "Journée d'intégration",
                      "ccf": "CCF — accompagnement obligatoire", "autre": "Autre absence"}
 
+    def periodes_detectees(self, population=None):
+        """
+        Périodes candidates, déduites de ce que ProNote exporte réellement.
+
+        Trois signatures exploitables, vérifiées sur les données :
+          · **journée d'intégration** — libellé « JOURNEE D'INTEGRATION », catégorie « Cours - Exceptionnel » ;
+          · **sortie pédagogique** — catégorie « Sorties Pédagogiques », ignorée ailleurs dans l'application ;
+          · **absence longue** — l'élève n'a aucun cours pendant une ou plusieurs semaines entières
+            alors que la majorité de l'établissement en a. C'est la seule trace qu'un stage laisse :
+            ni « stage », ni « PFMP », ni « CCF » n'apparaissent nulle part dans un export ProNote.
+
+        Rien n'est appliqué d'office : ce sont des propositions, à confirmer et à nommer.
+        """
+        population = population or self.population()
+        index, _ = self.index_ics()
+        par_fichier = {Path(e["chemin"]).name: e for e in index}
+        forces = self.etat.get("appariements_forces") or {}
+
+        integrations, sorties = defaultdict(set), defaultdict(set)
+        semaines_eleve, toutes_semaines = {}, Counter()
+        for eleve in population["eleves"]:
+            cours = population["cours"].get(eleve["id"])
+            if not cours:
+                continue
+            semaines = {c["debut"].date().isocalendar()[1] for c in cours}
+            semaines_eleve[eleve["id"]] = semaines
+            for s in semaines:
+                toutes_semaines[s] += 1
+            for c in cours:
+                if c.get("integration"):
+                    integrations[c["debut"].date()].add(eleve["id"])
+            impose = forces.get(eleve["id"])
+            entree = par_fichier.get(impose) if impose else None
+            if entree is None:
+                entree, _, _ = P.apparier(eleve, index)
+            if entree:
+                for sortie in self.sorties_de(entree["chemin"]):
+                    sorties[sortie["debut"].date()].add(eleve["id"])
+
+        propositions = []
+        for jour, eleves in sorted(integrations.items()):
+            propositions.append({"type": "integration", "nom": f"Journée d'intégration du {jour:%d/%m}",
+                                 "debut": jour.isoformat(), "fin": jour.isoformat(),
+                                 "eleves": sorted(eleves), "origine": "libellé ProNote"})
+        for jour, eleves in sorted(sorties.items()):
+            propositions.append({"type": "autre", "nom": f"Sortie pédagogique du {jour:%d/%m}",
+                                 "debut": jour.isoformat(), "fin": jour.isoformat(),
+                                 "eleves": sorted(eleves), "origine": "catégorie « Sorties Pédagogiques »"})
+
+        # Absences longues : signature d'un stage, faute de mieux.
+        scolaires = sorted(s for s, n in toutes_semaines.items() if n >= 0.6 * max(1, len(semaines_eleve)))
+        lundis = {}
+        for eleve in population["eleves"]:
+            for c in population["cours"].get(eleve["id"]) or []:
+                lundis.setdefault(c["debut"].date().isocalendar()[1], P.lundi_de(c["debut"].date()))
+        for id_eleve, semaines in semaines_eleve.items():
+            absentes = [s for s in scolaires if s not in semaines]
+            blocs, debut, precedent = [], None, None
+            for s in absentes:
+                if precedent is None or scolaires.index(s) != scolaires.index(precedent) + 1:
+                    if debut is not None:
+                        blocs.append((debut, precedent))
+                    debut = s
+                precedent = s
+            if debut is not None:
+                blocs.append((debut, precedent))
+            nom_eleve = next(e["nom_complet"] for e in population["eleves"] if e["id"] == id_eleve)
+            for a, b in blocs:
+                if a not in lundis or b not in lundis:
+                    continue
+                propositions.append({
+                    "type": "stage", "nom": f"Absence de {nom_eleve} (S{a}" + (f"–S{b})" if a != b else ")"),
+                    "debut": lundis[a].isoformat(),
+                    "fin": (lundis[b] + timedelta(days=4)).isoformat(),
+                    "eleves": [id_eleve],
+                    "origine": "aucun cours ces semaines-là — stage probable, à confirmer"})
+        return propositions
+
     def periodes(self):
         return list(self.etat.get("periodes") or [])
 
@@ -565,10 +654,12 @@ class Projet:
                 for parite in ("A", "B"):
                     if not case[parite]:
                         continue
-                    famille = referentiel.famille(case[parite][0]["matiere"])
-                    if famille in exclues or efforts.get(eleve["id"], {}).get(famille) == 0:
+                    cours_case = case[parite][0]
+                    famille = referentiel.famille(cours_case["matiere"])
+                    if (cours_case.get("dispense") or famille in exclues
+                            or efforts.get(eleve["id"], {}).get(famille) == 0):
                         continue
-                    creneaux[(parite, jour, s)] = case[parite][0]
+                    creneaux[(parite, jour, s)] = cours_case
             if creneaux:
                 grilles[eleve["id"]] = creneaux
             else:

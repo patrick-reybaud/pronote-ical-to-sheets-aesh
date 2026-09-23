@@ -1138,9 +1138,49 @@ ECRANS.periodes = async () => {
       période reçoit sa propre affectation, qui apparaît sous l'emploi du temps de chaque AESH.
       Un <b>CCF</b> fonctionne à l'inverse : les élèves concernés doivent être accompagnés sur toute
       la durée de l'épreuve, et le calcul le garantit.</p>
-    <div class="ligne"><button class="action" id="ajouter-periode">Ajouter une période</button></div>
+    <div class="ligne">
+      <button class="action" id="ajouter-periode">Ajouter une période</button>
+      <button class="action secondaire" id="detecter-periodes">Proposer d'après les exports ProNote</button>
+    </div>
+    <div id="propositions"></div>
     <div id="retour-periodes"></div>
     <div id="liste-periodes"></div>`;
+  $("#detecter-periodes").onclick = async () => {
+    const zone = $("#propositions");
+    zone.innerHTML = message("info", `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span> Analyse des exports…`);
+    try {
+      const r = await api("/api/periodes/detecter");
+      if (!r.propositions.length) {
+        zone.innerHTML = message("info", "Rien de détectable dans les exports fournis.");
+        return;
+      }
+      zone.innerHTML = `<div class="carte">
+        <b>Propositions d'après les exports</b>
+        <p class="aide" style="margin:6px 0 10px">Ni « stage », ni « PFMP », ni « CCF » n'apparaissent
+          dans un export ProNote — vérifié sur 153 771 événements. Ce qui suit est donc déduit :
+          les journées d'intégration et les sorties pédagogiques sont <b>lues</b> dans l'export ;
+          les absences longues en sont seulement <b>l'indice</b>, le plus souvent un stage.
+          Rien n'est appliqué tant que vous n'avez pas ajouté la période.</p>
+        <div class="defile" style="max-height:340px"><table>
+          <tr><th>Proposition</th><th>Type</th><th>Dates</th><th>Élèves</th><th>D'après</th><th></th></tr>
+          ${r.propositions.map((p, i) => `<tr>
+            <td>${ech(p.nom)}</td>
+            <td>${ech(E.types_periode[p.type] || p.type)}</td>
+            <td style="white-space:nowrap">${ech(p.debut)} → ${ech(p.fin)}</td>
+            <td style="font-size:12px">${ech(p.noms.slice(0,3).join(", "))}${p.noms.length>3?` (+${p.noms.length-3})`:""}</td>
+            <td style="font-size:11.5px;color:#4a5258">${ech(p.origine)}</td>
+            <td><button class="action secondaire ajouter-prop" data-i="${i}"
+                        style="padding:3px 10px;font-size:12px">Ajouter</button></td></tr>`).join("")}
+        </table></div></div>`;
+      document.querySelectorAll(".ajouter-prop").forEach(b => b.onclick = async () => {
+        const prop = r.propositions[+b.dataset.i];
+        periodes.push({id: "p" + Date.now().toString(36) + b.dataset.i, nom: prop.nom,
+                       type: prop.type, debut: prop.debut, fin: prop.fin, eleves: prop.eleves});
+        await sauver(); dessine();
+        b.disabled = true; b.textContent = "Ajoutée";
+      });
+    } catch (e) { zone.innerHTML = erreurAffichee(e); }
+  };
   $("#ajouter-periode").onclick = async () => {
     periodes.push({id: "p" + Date.now().toString(36), nom: "", type: "stage",
                    debut: "", fin: "", eleves: []});
