@@ -161,9 +161,13 @@ zéro alors que l'élève a bien des droits.
 Même principe, côté accompagnants : de 1 à 5, l'aisance dans chaque famille de matières. **0 est un
 refus** : l'accompagnant ne sera jamais placé sur cette matière, quelles que soient les circonstances.
 
-Un bloc **Élèves confiés à cet AESH** permet d'imposer, privilégier, éviter ou interdire chaque
-binôme — utile lorsqu'un élève a l'habitude d'être accompagné par la même personne. Ce sont les
-mêmes réglages que le tableau croisé de l'écran « Pondérations ».
+Un bloc **AESH habituel de chaque élève** répond à la question telle qu'elle se pose sur le terrain :
+un élève, son accompagnant. On désigne l'AESH dans la liste, et le calcul le **privilégie**
+d'emblée — une colonne « Force » permet de passer à **imposer** si ce doit être garanti. Un seul AESH
+souhaité par élève : en désigner un autre remplace le précédent.
+
+Les **interdictions** et les préférences plus fines se règlent dans le tableau croisé de l'écran
+« Pondérations », qui reste la vue complète.
 
 Les **disponibilités** se renseignent de deux façons :
 

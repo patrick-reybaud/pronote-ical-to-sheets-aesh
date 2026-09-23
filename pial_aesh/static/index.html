@@ -896,13 +896,14 @@ ECRANS.aesh = async () => {
       <div id="grille-dispo"></div>
     </div>
     <div class="carte">
-      <b>Élèves confiés à cet AESH</b>
+      <b>AESH habituel de chaque élève</b>
       <p class="aide" style="margin:6px 0 10px">Utile lorsqu'un élève a l'habitude d'être accompagné
-        par la même personne. <b>Imposer</b> garantit au moins un créneau ensemble, <b>privilégier</b>
-        pèse sans contraindre, <b>interdire</b> exclut le binôme. Ces réglages sont les mêmes que ceux
-        du tableau croisé de l'écran « Pondérations ».</p>
+        par la même personne : désignez-la, et le calcul la <b>privilégiera</b>. Passez à
+        <b>imposer</b> si ce doit être garanti. Les interdictions se règlent dans le tableau croisé
+        de l'écran « Pondérations ».</p>
       <div class="defile"><table>
-        <tr><th>Élève</th><th>Aide</th><th class="num">Notifié</th><th style="width:190px">Décision</th></tr>
+        <tr><th>Élève</th><th>Aide</th><th class="num">Notifié</th>
+            <th style="width:280px">AESH souhaité</th><th style="width:150px">Force</th></tr>
         <tbody id="corps-paires"></tbody>
       </table></div>
     </div>`;
@@ -944,28 +945,53 @@ ECRANS.aesh = async () => {
     $("#tout-cocher").onclick = () => { d.grille.forEach(l => l.fill(true)); dessinerGrille().then(sauver); };
     $("#tout-decocher").onclick = () => { d.grille.forEach(l => l.fill(false)); sauver().then(dessinerGrille); };
   };
-  const PREFERENCES = [[0,"—"],[2,"imposer"],[1,"privilégier"],[-1,"éviter"],[-2,"interdire"]];
+  // Un élève par ligne, et on lui désigne son accompagnant : c'est ainsi que la question se pose
+  // sur le terrain. Choisir un AESH vaut « privilégier » — l'intention ordinaire — et la colonne
+  // « Force » ne sert qu'à durcir ce choix. Les interdictions restent dans le tableau croisé.
   const paires = structuredClone(E.etat.paires || {});
+  const souhaite = e => {
+    const trouve = POP.aesh.find(a => (paires[`${a.id}|${e.id}`] || 0) > 0);
+    return trouve ? {aesh: trouve.id, force: paires[`${trouve.id}|${e.id}`]} : {aesh: "", force: 1};
+  };
   const dessinerPaires = () => {
-    const idAesh = $("#choix-aesh").value;
     $("#corps-paires").innerHTML = POP.eleves.map(e => {
-      const v = paires[`${idAesh}|${e.id}`] || 0;
+      const {aesh, force} = souhaite(e);
       return `<tr><td>${ech(e.nom_complet)}${e.a_edt ? "" : " <span class='pastille ko'>sans EDT</span>"}</td>
         <td>${e.type_aide || "—"}</td><td class="num">${e.heures || 0} h</td>
-        <td class="${v < 0 ? "p-2" : v > 0 ? "p2" : ""}">
-          <select class="pref" data-k="${idAesh}|${e.id}" style="width:100%">
-            ${PREFERENCES.map(([val, lib]) =>
-              `<option value="${val}" ${val === v ? "selected" : ""}>${lib}</option>`).join("")}
+        <td class="${aesh ? "p2" : ""}">
+          <select class="choix-aesh-eleve" data-e="${e.id}" style="width:100%">
+            <option value="">— aucun, le calcul décide —</option>
+            ${POP.aesh.map(a => `<option value="${a.id}" ${a.id === aesh ? "selected" : ""}
+              >${ech(a.nom_complet)}</option>`).join("")}
+          </select></td>
+        <td><select class="force-aesh" data-e="${e.id}" ${aesh ? "" : "disabled"} style="width:100%">
+            <option value="1" ${force === 1 ? "selected" : ""}>privilégier</option>
+            <option value="2" ${force === 2 ? "selected" : ""}>imposer</option>
           </select></td></tr>`;
     }).join("");
-    document.querySelectorAll("select.pref").forEach(sel => sel.onchange = async () => {
-      const v = +sel.value;
-      if (v) paires[sel.dataset.k] = v; else delete paires[sel.dataset.k];
-      sel.parentElement.className = v < 0 ? "p-2" : v > 0 ? "p2" : "";
+    const appliquer = async (idEleve, idAesh, force) => {
+      // Un seul AESH souhaité par élève : on efface les autres préférences positives, sans toucher
+      // aux interdictions posées ailleurs.
+      POP.aesh.forEach(a => {
+        const cle = `${a.id}|${idEleve}`;
+        if ((paires[cle] || 0) > 0) delete paires[cle];
+      });
+      if (idAesh) paires[`${idAesh}|${idEleve}`] = force;
       await enregistrer({paires});
+    };
+    document.querySelectorAll("select.choix-aesh-eleve").forEach(sel => sel.onchange = async () => {
+      const forceSel = document.querySelector(`select.force-aesh[data-e="${sel.dataset.e}"]`);
+      forceSel.disabled = !sel.value;
+      if (sel.value && ![1, 2].includes(+forceSel.value)) forceSel.value = "1";
+      sel.parentElement.className = sel.value ? "p2" : "";
+      await appliquer(sel.dataset.e, sel.value, +forceSel.value || 1);
+    });
+    document.querySelectorAll("select.force-aesh").forEach(sel => sel.onchange = async () => {
+      const choix = document.querySelector(`select.choix-aesh-eleve[data-e="${sel.dataset.e}"]`);
+      if (choix.value) await appliquer(sel.dataset.e, choix.value, +sel.value);
     });
   };
-  $("#choix-aesh").onchange = () => { dessinerGrille(); dessinerPaires(); };
+  $("#choix-aesh").onchange = dessinerGrille;
   dessinerGrille(); dessinerPaires();
 };
 
