@@ -1230,9 +1230,21 @@ def recaler_chemins(projet):
     return bool(projet.etat["fichier_pial"]), ics
 
 
-def ouvrir_dans_explorateur(nom=None):
-    """Ouvre le dossier des projets (ou celui d'un projet) dans l'explorateur de fichiers du poste."""
+def ouvrir_dans_explorateur(nom=None, sous_dossier=None):
+    """
+    Ouvre un dossier de travail dans l'explorateur de fichiers du poste.
+
+    Sans argument : le dossier des projets. Avec un nom : celui de ce projet. Avec en plus un
+    sous-dossier — « sorties » en pratique — on tombe directement sur les fichiers produits, ce qui
+    évite la boîte « Enregistrer sous » quand on veut simplement retrouver un export.
+    """
     cible = DOSSIER_PROJETS if not nom else (DOSSIER_PROJETS / nom_de_dossier(nom))
+    if sous_dossier:
+        # Un nom simple, et rien d'autre : « Path(...).name » laisse passer « .. », qui ferait
+        # remonter d'un cran hors du projet.
+        propre = re.sub(r"[^A-Za-z0-9_-]", "", str(sous_dossier))
+        if propre:
+            cible = cible / propre
     cible.mkdir(parents=True, exist_ok=True)
     if sys.platform.startswith("win"):
         os.startfile(cible)                                     # noqa: S606 — chemin construit par nous

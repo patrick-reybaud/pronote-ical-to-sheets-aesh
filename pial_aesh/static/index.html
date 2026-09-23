@@ -1495,6 +1495,7 @@ async function vueSynthese() {
         <button class="action secondaire" id="exp-html">AESH — version imprimable (.html)</button>
         <button class="action" id="exp-eleves-xlsx">Emplois du temps des élèves (.xlsx)</button>
         <button class="action secondaire" id="exp-eleves">Élèves — version imprimable (.html)</button>
+        <button class="action secondaire" id="exp-dossier">Ouvrir le dossier des exports</button>
       </div>
       <div id="retour-export"></div>
       ${r.recherche ? `<p class="aide" style="margin:10px 0 0">Recherche « ${ech(r.recherche.exigence)} » :
@@ -1543,6 +1544,13 @@ async function vueSynthese() {
   };
   $("#exp-eleves").onclick = async e => {
     try { await telecharger("/api/export/eleves", e.target); }
+    catch (err) { $("#retour-export").innerHTML = erreurAffichee(err); }
+  };
+  // Les fichiers sont écrits sur le disque avant d'être proposés au téléchargement : dans la
+  // fenêtre de l'application, ouvrir le dossier évite la boîte « Enregistrer sous ».
+  $("#exp-dossier").onclick = async () => {
+    try { await api("/api/dossier", {method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({projet: E.nom, sous_dossier: "sorties"})}); }
     catch (err) { $("#retour-export").innerHTML = erreurAffichee(err); }
   };
   $("#exp-eleves-xlsx").onclick = async e => {

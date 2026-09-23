@@ -33,7 +33,7 @@ jobs:
 
       - name: Vérifier que l'application démarre
         run: |
-          python -c "import pial_aesh.serveur, pial_aesh.affectation; from ortools.sat.python import cp_model; print('modules OK')"
+          python -c "import pial_aesh.serveur, pial_aesh.affectation, pial_aesh.tableau, webview; from ortools.sat.python import cp_model; print('modules OK')"
 
       - name: Compiler
         run: pyinstaller --clean --noconfirm empaqueter/pial_aesh.spec
@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\PIAL-Affectation-AESH.exe `
-                             -ArgumentList "--sans-navigateur","--port","8799" -PassThru
+                             -ArgumentList "--sans-interface","--port","8799" -PassThru
           Start-Sleep -Seconds 25
           try {
             $r = Invoke-WebRequest -Uri http://127.0.0.1:8799/api/etat -UseBasicParsing -TimeoutSec 20
@@ -66,8 +66,12 @@ jobs:
             Application « PIAL — Affectation des AESH » pour Windows.
 
             Téléchargez `PIAL-Affectation-AESH.exe` et double-cliquez dessus : rien à installer,
-            ni Python ni dépendance. Une fenêtre noire s'ouvre — laissez-la ouverte, elle fait
-            tourner l'application — et l'interface s'ouvre dans le navigateur.
+            ni Python ni dépendance. L'application s'ouvre dans **une seule fenêtre** — pas de
+            fenêtre noire, pas de navigateur à côté. Fermer la fenêtre arrête l'application.
+
+            L'affichage utilise le moteur d'Edge (WebView2), présent d'origine sur Windows 11 et
+            installé par Edge sur Windows 10. S'il manque, l'interface s'ouvre dans le navigateur
+            par défaut plutôt que d'échouer.
 
             Au premier lancement, Windows SmartScreen peut afficher un avertissement parce que le
             fichier n'est pas signé : « Informations complémentaires » puis « Exécuter quand même ».

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Lancement de l'application « PIAL — Affectation des AESH » sous macOS.
-# Double-cliquez sur ce fichier ; laissez la fenêtre Terminal ouverte pendant l'utilisation.
+# Lancement de l'application « PIAL — Affectation des AESH » sous macOS, depuis le code source.
+# Double-cliquez sur ce fichier : l'application s'ouvre dans sa propre fenêtre. Le Terminal reste
+# ouvert derrière — il sert seulement à lancer, et affiche le journal en cas de souci.
 cd "$(dirname "$0")" || exit 1
 if [ -x "./venv/bin/python" ]; then
   exec ./venv/bin/python app.py

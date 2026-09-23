@@ -233,8 +233,8 @@ def api_ajouter_fichiers(nom):
 @application.post("/api/dossier")
 def api_ouvrir_dossier():
     """Ouvre le dossier de travail dans l'explorateur de fichiers du poste."""
-    nom = (request.json or {}).get("projet")
-    cible = ouvrir_dans_explorateur(nom)
+    corps = request.json or {}
+    cible = ouvrir_dans_explorateur(corps.get("projet"), corps.get("sous_dossier"))
     return jsonify({"dossier": str(cible)})
 
 

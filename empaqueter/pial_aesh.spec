@@ -18,15 +18,30 @@ RACINE = Path(SPECPATH).parent
 # ne voit pas : on les prend en bloc, faute de quoi l'exécutable démarre puis échoue au calcul.
 donnees_ortools, binaires_ortools, imports_ortools = collect_all("ortools")
 
+# pywebview charge son moteur d'affichage à l'exécution, par son nom : l'analyse statique ne voit
+# ni les modules de plateforme ni les bibliothèques natives d'Edge WebView2 qu'il embarque.
+donnees_webview, binaires_webview, imports_webview = collect_all("webview")
+
+# Sous Windows, pywebview pilote WebView2 à travers pythonnet : le pont .NET est chargé
+# dynamiquement, avec des assemblages et un lanceur que PyInstaller ne repère pas tout seul.
+donnees_net, binaires_net, imports_net = [], [], []
+for module in ("pythonnet", "clr_loader"):
+    try:
+        d, b, i = collect_all(module)
+        donnees_net += d; binaires_net += b; imports_net += i
+    except Exception:
+        pass        # absent hors Windows : sans objet
+
 a = Analysis(
     [str(RACINE / "app.py")],
     pathex=[str(RACINE)],
-    binaries=binaires_ortools,
+    binaries=binaires_ortools + binaires_webview + binaires_net,
     datas=[(str(RACINE / "pial_aesh" / "static"), "pial_aesh/static"),
-           (str(RACINE / "GUIDE_APPLICATION.md"), ".")] + donnees_ortools,
+           (str(RACINE / "GUIDE_APPLICATION.md"), ".")] + donnees_ortools + donnees_webview + donnees_net,
     hiddenimports=["pial_aesh.serveur", "pial_aesh.projet", "pial_aesh.export",
                    "pial_aesh.affectation", "pial_aesh.pronote", "pial_aesh.pial",
-                   "pial_aesh.matieres", "pial_aesh.tableur"] + imports_ortools,
+                   "pial_aesh.matieres", "pial_aesh.tableur", "pial_aesh.tableau",
+                   "clr", "clr_loader"] + imports_ortools + imports_webview + imports_net,
     hookspath=[], hooksconfig={}, runtime_hooks=[],
     excludes=["tkinter", "matplotlib", "numpy.distutils", "pytest", "IPython"],
     noarchive=False,
@@ -37,9 +52,10 @@ exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [],
     name="PIAL-Affectation-AESH",
     debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
-    # Fenêtre console volontairement conservée : elle affiche l'adresse de l'interface et sert de
-    # bouton d'arrêt (la fermer arrête l'application), ce que le guide explique à l'utilisatrice.
-    console=True,
+    # Sans console : l'application tient dans une seule fenêtre. Ce qui s'écrivait dans la fenêtre
+    # noire va au journal (~/PIAL-AESH/journal.log), et un échec de démarrage — le seul cas où plus
+    # rien ne s'afficherait — ouvre une boîte de dialogue du système.
+    console=False,
     disable_windowed_traceback=False, argv_emulation=False,
     target_arch=None, codesign_identity=None, entitlements_file=None,
 )

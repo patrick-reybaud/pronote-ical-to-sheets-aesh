@@ -13,9 +13,12 @@ Elle fonctionne **entièrement sur le poste** : aucune donnée d'élève ne sort
 
 > **[PIAL-Affectation-AESH.exe](https://github.com/patrick-reybaud/pronote-ical-to-sheets-aesh/releases/latest)** (57 Mo)
 
-Placez-le où vous voulez et **double-cliquez dessus**. Une fenêtre noire s'ouvre — c'est
-l'application qui tourne, laissez-la ouverte — et l'interface s'ouvre dans le navigateur. Pour
-quitter : fermez la fenêtre noire.
+Placez-le où vous voulez et **double-cliquez dessus**. L'application s'ouvre dans **une seule
+fenêtre** : pas de fenêtre noire, pas de navigateur à côté. Pour quitter, fermez la fenêtre.
+
+L'affichage utilise le moteur d'Edge (WebView2), présent d'origine sur Windows 11 et installé par
+Edge sur Windows 10. S'il manquait, l'application ne resterait pas bloquée : elle ouvrirait
+l'interface dans le navigateur par défaut, exactement comme avant.
 
 Au premier lancement, Windows peut afficher un avertissement SmartScreen parce que le fichier n'est
 pas signé électroniquement : **« Informations complémentaires »** puis **« Exécuter quand même »**.
@@ -38,8 +41,20 @@ python app.py
 
 Ou double-cliquer sur `demarrer_mac.command`.
 
-L'interface s'ouvre sur `http://127.0.0.1:8765/`. Si ce port est occupé, l'application en choisit un
-autre et l'affiche dans la fenêtre.
+L'application s'ouvre dans sa propre fenêtre (moteur WebKit du système). Le serveur interne écoute
+sur `http://127.0.0.1:8765/` ; si ce port est occupé, un autre est choisi automatiquement.
+
+Options de lancement :
+
+| | |
+|---|---|
+| `python app.py` | fenêtre unique — le fonctionnement normal |
+| `python app.py --navigateur` | ouvrir dans le navigateur par défaut |
+| `python app.py --sans-interface` | ne rien ouvrir (test automatisé) |
+| `python app.py --port 9000` | choisir le port d'écoute |
+
+Le mode `--navigateur` est utile pour deux choses : les outils de développement du navigateur, et
+l'impression des exports `.html` si l'aperçu de la fenêtre ne vous convient pas.
 
 ---
 
@@ -336,7 +351,9 @@ cours a disparu de l'emploi du temps — il le dit au lieu de l'ignorer en silen
 
 #### Le bilan
 
-Quatre exports, en `.xlsx` et en `.html` imprimable :
+Quatre exports, en `.xlsx` et en `.html` imprimable. Le bouton **Ouvrir le dossier des exports**
+affiche directement le dossier où ils sont écrits — plus rapide que la boîte « Enregistrer sous »
+quand on veut simplement retrouver le dernier fichier produit.
 
 | | Une feuille par | Couleur | Gris |
 |---|---|---|---|
