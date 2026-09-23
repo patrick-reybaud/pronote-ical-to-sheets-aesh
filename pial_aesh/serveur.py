@@ -140,6 +140,49 @@ def api_importer_projet():
     return jsonify({"nom": nom, "pial": pial, "ics": ics})
 
 
+@application.post("/api/projets/<nom>/fichiers")
+def api_ajouter_fichiers(nom):
+    """
+    Ajoute des fichiers dans un projet existant, en respectant leur chemin relatif.
+
+    Sert à l'import d'un projet volumineux : le dossier déposé est envoyé en plusieurs fois, le
+    premier envoi crée le projet à partir de projet.json, les suivants le remplissent. Sans cela,
+    un dossier de deux mille fichiers passerait dans autant de lots dont un seul contiendrait
+    projet.json — et tous les autres seraient refusés.
+    """
+    from .projet import chemin_sur, nom_de_dossier
+
+    dossier = DOSSIER_PROJETS / nom_de_dossier(nom)
+    if not (dossier / "projet.json").exists():
+        raise Erreur(f"Projet introuvable : {nom}")
+    recus = request.files.getlist("fichiers")
+    prefixe = (request.args.get("prefixe") or "").strip("/")
+    ecrits, ignores = 0, 0
+    for f in recus:
+        relatif = chemin_sur(f.filename)
+        if relatif is None:
+            ignores += 1
+            continue
+        if prefixe and relatif.parts and relatif.parts[0] == prefixe:
+            relatif = relatif.relative_to(prefixe) if len(relatif.parts) > 1 else None
+        if relatif is None:
+            ignores += 1
+            continue
+        cible = dossier / relatif
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_bytes(f.read())
+        ecrits += 1
+
+    if request.args.get("dernier") in ("1", "true", "oui"):
+        projet = ouvrir_projet(nom_de_dossier(nom))
+        from .projet import recaler_chemins
+        pial, ics = recaler_chemins(projet)
+        journal.info("projet « %s » complété : %d fichiers, PIAL %s, %d ICS",
+                     nom, ecrits, "oui" if pial else "non", ics)
+        return jsonify({"ecrits": ecrits, "ignores": ignores, "pial": pial, "ics": ics, "fini": True})
+    return jsonify({"ecrits": ecrits, "ignores": ignores, "fini": False})
+
+
 @application.post("/api/dossier")
 def api_ouvrir_dossier():
     """Ouvre le dossier de travail dans l'explorateur de fichiers du poste."""

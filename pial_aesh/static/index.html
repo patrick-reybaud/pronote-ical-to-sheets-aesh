@@ -182,7 +182,7 @@ function brancherDepot(id, url, apresEnvoi) {
 
     const envoyerLot = async (lot, estDernier, profondeur = 0) => {
       const corps = new FormData();
-      for (const f of lot) corps.append("fichiers", f, f.webkitRelativePath || f.name);
+      for (const f of lot) corps.append("fichiers", f, f._chemin || f.webkitRelativePath || f.name);
       for (let essai = 1; essai <= ESSAIS; essai++) {
         try {
           return await api(url + (estDernier ? "?dernier=1" : ""), {method: "POST", body: corps});
@@ -244,7 +244,12 @@ function brancherDepot(id, url, apresEnvoi) {
   };
 }
 async function parcourir(entree, sortie) {
-  if (entree.isFile) return new Promise(r => entree.file(f => { sortie.push(f); r(); }));
+  if (entree.isFile) return new Promise(r => entree.file(f => {
+    // fullPath vaut « /MonDossier/sources/x.ics » : c'est la seule trace du chemin relatif pour un
+    // dossier glissé-déposé, webkitRelativePath restant vide dans ce cas.
+    try { f._chemin = (entree.fullPath || "").replace(/^\//, "") || f.name; } catch { f._chemin = f.name; }
+    sortie.push(f); r();
+  }));
   const lecteur = entree.createReader();
   while (true) {
     const lot = await new Promise(r => lecteur.readEntries(r));
@@ -318,14 +323,7 @@ ECRANS.projet = async () => {
   $("#creer").onclick = () => ouvrir($("#nom-projet").value);
   $("#nom-projet").onkeydown = e => { if (e.key === "Enter") ouvrir(e.target.value); };
   document.querySelectorAll(".ouvrir").forEach(b => b.onclick = () => ouvrir(b.dataset.n));
-  brancherDepot("depot-projet", "/api/projets/importer", (r, retour) => {
-    retour.innerHTML = message("succes",
-      `Projet <b>${ech(r.nom)}</b> importé — fichier PIAL ${r.pial ? "présent" : "<b>absent</b>"},
-       ${r.ics} emploi(s) du temps.`
-      + (r.ics ? "" : "<br>Redéposez les exports ProNote à l'étape « Import » : tout le reste du "
-                      + "travail est conservé."));
-    setTimeout(dessiner, 2200);
-  });
+  brancherImportProjet();
   document.querySelectorAll(".exporter").forEach(b => b.onclick = () => {
     const nom = b.dataset.n;
     const boite = document.createElement("div");
@@ -334,12 +332,12 @@ ECRANS.projet = async () => {
       <h3 style="margin:0 0 10px">Exporter « ${ech(nom)} »</h3>
       <p class="aide" style="margin:0 0 14px">Tout le travail — établissement, semaines types, efforts,
         affinités, disponibilités, règles, pondérations et dernier résultat — tient dans le fichier de
-        projet. Les exports ProNote, eux, pèsent plusieurs centaines de mégaoctets et se réimportent
-        en deux clics.</p>
-      <div class="ligne"><button class="action" id="exp-reglages">Réglages seuls (léger)</button>
-        <span style="color:#5b6570">recommandé : circule par courriel, les .ics sont à redéposer</span></div>
-      <div class="ligne"><button class="action secondaire" id="exp-complet">Tout, exports ProNote compris</button>
-        <span style="color:#5b6570">le projet se rouvre tel quel, mais l'archive est volumineuse</span></div>
+        projet. Les exports ProNote se compressent très bien : les emporter ne coûte que quelques
+        mégaoctets de plus.</p>
+      <div class="ligne"><button class="action" id="exp-complet">Tout, exports ProNote compris</button>
+        <span style="color:#5b6570">recommandé : le projet se rouvre tel quel, sans rien redéposer</span></div>
+      <div class="ligne"><button class="action secondaire" id="exp-reglages">Réglages seuls</button>
+        <span style="color:#5b6570">le plus léger, mais les .ics seront à redéposer</span></div>
       <div class="ligne" style="justify-content:flex-end;margin:14px 0 0">
         <button class="action secondaire" id="exp-annuler">Annuler</button></div></div>`;
     document.body.appendChild(boite);
@@ -577,6 +575,90 @@ function brancherNotes(valeurs, surChangement) {
       if (exclu || champ.dataset.recharge) { POP = null; }
     };
   });
+}
+
+// L'import d'un projet ne peut pas être découpé comme un dépôt ordinaire : un dossier exporté
+// « complet » contient des milliers de fichiers, et un seul lot porterait projet.json — tous les
+// autres seraient refusés. On crée donc d'abord le projet à partir de projet.json, puis on le
+// remplit lot par lot.
+function brancherImportProjet() {
+  const zone = $("#depot-projet"), champ = $("input", zone), retour = $("#depot-projet-retour");
+  const TAILLE_LOT = 60;
+
+  const traiter = async fichiers => {
+    if (!fichiers.length) return;
+    const chemin = f => f._chemin || f.webkitRelativePath || f.name;
+    const archive = fichiers.find(f => /\.zip$/i.test(f.name));
+    const dire = t => retour.innerHTML = message("info",
+      `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span> ${t}`);
+
+    try {
+      if (archive) {
+        dire("Lecture de l'archive…");
+        const corps = new FormData();
+        corps.append("fichiers", archive, archive.name);
+        const r = await api("/api/projets/importer", {method:"POST", body: corps});
+        return conclure(r);
+      }
+      const manifeste = fichiers.find(f => chemin(f).split("/").pop() === "projet.json");
+      if (!manifeste) throw new Error(
+        "Le dossier déposé ne contient pas de fichier « projet.json ». Déposez le dossier du projet "
+        + "lui-même, ou l'archive .zip produite par « Exporter… ».");
+
+      // Le dossier englobant est celui qui contient projet.json : on l'enlève des chemins.
+      const morceaux = chemin(manifeste).split("/");
+      const prefixe = morceaux.length > 1 ? morceaux[0] : "";
+
+      dire("Création du projet…");
+      const premier = new FormData();
+      premier.append("fichiers", manifeste, chemin(manifeste));
+      const cree = await api("/api/projets/importer", {method:"POST", body: premier});
+
+      const reste = fichiers.filter(f => f !== manifeste);
+      for (let i = 0; i < reste.length; i += TAILLE_LOT) {
+        const lot = reste.slice(i, i + TAILLE_LOT);
+        const fait = Math.min(i + lot.length, reste.length);
+        dire(`Copie des fichiers : <b>${fait} / ${reste.length}</b>`);
+        const corps = new FormData();
+        for (const f of lot) corps.append("fichiers", f, chemin(f));
+        const dernier = fait >= reste.length;
+        await api(`/api/projets/${encodeURIComponent(cree.nom)}/fichiers`
+                  + `?prefixe=${encodeURIComponent(prefixe)}${dernier ? "&dernier=1" : ""}`,
+                  {method:"POST", body: corps});
+      }
+      if (!reste.length) {
+        await api(`/api/projets/${encodeURIComponent(cree.nom)}/fichiers`
+                  + `?prefixe=${encodeURIComponent(prefixe)}&dernier=1`,
+                  {method:"POST", body: new FormData()}).catch(() => {});
+      }
+      const etat = await api("/api/projets");
+      const info = etat.projets.find(p => p.nom === cree.nom) || {};
+      conclure({nom: cree.nom, pial: !!info.pial, ics: info.ics || 0});
+    } catch (e) { retour.innerHTML = erreurAffichee(e); }
+  };
+
+  const conclure = async r => {
+    await majEtat();
+    retour.innerHTML = message("succes",
+      `Projet <b>${ech(r.nom)}</b> importé — fichier PIAL ${r.pial ? "présent" : "<b>absent</b>"},
+       ${r.ics} emploi(s) du temps.`
+      + (r.ics ? "" : "<br>Redéposez les exports ProNote à l'étape « Import » : tout le reste du "
+                      + "travail est conservé."));
+    setTimeout(dessiner, 2400);
+  };
+
+  zone.onclick = () => champ.click();
+  champ.onchange = () => traiter([...champ.files]);
+  zone.ondragover = e => { e.preventDefault(); zone.classList.add("survol"); };
+  zone.ondragleave = () => zone.classList.remove("survol");
+  zone.ondrop = async e => {
+    e.preventDefault(); zone.classList.remove("survol");
+    const fichiers = [];
+    const entrees = [...(e.dataTransfer.items || [])].map(i => i.webkitGetAsEntry?.()).filter(Boolean);
+    if (entrees.length) { for (const entree of entrees) await parcourir(entree, fichiers); }
+    else fichiers.push(...e.dataTransfer.files);
+    traiter(fichiers);
+  };
 }
 
 function brancherAssociation(apresChoix) {

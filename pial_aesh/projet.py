@@ -705,15 +705,30 @@ def importer_projet(source, nom=None, fichiers=None):
 
     projet = Projet(destination)
     projet.etat["nom"] = nom
-    # Les chemins enregistrés pointaient vers l'ancien poste : on les recale sur le nouveau dossier.
+    pial, ics = recaler_chemins(projet)
+    return nom, pial, ics
+
+
+def recaler_chemins(projet):
+    """
+    Refait pointer le projet sur ses propres fichiers.
+
+    Les chemins enregistrés désignent le poste d'origine ; après un import ils ne veulent plus rien
+    dire. On les reconstruit à partir du contenu réellement présent — ce qui permet aussi d'appeler
+    cette fonction quand les fichiers arrivent après la création du projet.
+    """
     ancien = projet.etat.get("fichier_pial")
-    if ancien:
-        candidat = destination / "sources" / Path(ancien).name
-        projet.etat["fichier_pial"] = str(candidat) if candidat.exists() else None
-    dossier_ics = destination / "sources" / "ics"
-    projet.etat["sources_ics"] = [str(dossier_ics)] if any(dossier_ics.glob("*.ics")) else []
+    candidat = projet.dossier / "sources" / Path(ancien).name if ancien else None
+    if candidat is None or not candidat.exists():
+        classeurs = sorted((projet.dossier / "sources").glob("*.ods")) \
+                    + sorted((projet.dossier / "sources").glob("*.xlsx"))
+        candidat = classeurs[0] if classeurs else None
+    projet.etat["fichier_pial"] = str(candidat) if candidat else None
+    dossier_ics = projet.dossier / "sources" / "ics"
+    ics = len(list(dossier_ics.glob("*.ics"))) if dossier_ics.is_dir() else 0
+    projet.etat["sources_ics"] = [str(dossier_ics)] if ics else []
     projet.enregistrer()
-    return nom, bool(projet.etat["fichier_pial"]), len(list(dossier_ics.glob("*.ics")))
+    return bool(projet.etat["fichier_pial"]), ics
 
 
 def ouvrir_dans_explorateur(nom=None):

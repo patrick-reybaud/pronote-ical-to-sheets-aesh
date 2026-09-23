@@ -63,10 +63,10 @@ ou versionner.
 
 Sur l'écran **Projet**, le bouton **Exporter…** produit une archive `.zip`, avec deux choix :
 
-| | Contenu | Poids |
+| | Contenu | Poids mesuré |
 |---|---|---|
-| **Réglages seuls** *(recommandé)* | `projet.json` + le fichier PIAL | moins d'un mégaoctet — circule par courriel |
-| **Tout** | + les exports ProNote importés | plusieurs centaines de mégaoctets |
+| **Tout** *(recommandé)* | `projet.json`, fichier PIAL **et** exports ProNote | **≈ 9 Mo** pour 1 920 emplois du temps — les `.ics` se compressent à 96 % |
+| **Réglages seuls** | `projet.json` + le fichier PIAL | ≈ 250 Ko, mais les `.ics` seront à redéposer |
 
 Sur l'autre poste, déposez l'archive dans la zone **Importer un projet** du même écran. Avec
 l'export léger, il reste à redéposer les `.ics` à l'étape « Import » : **tout le reste du travail est
