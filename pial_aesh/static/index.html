@@ -140,6 +140,40 @@ async function api(url, options = {}) {
   return corps;
 }
 async function majEtat() { E = await api("/api/etat"); dessinerNav(); }
+
+/*
+ * Téléchargement d'un fichier produit par l'application.
+ *
+ * On ne passe plus par « location.href » : c'est une navigation, et deux téléchargements lancés
+ * coup sur coup s'annulaient l'un l'autre — le navigateur affichait « Zéro Ko sur 145 Ko,
+ * impossible de créer le fichier ». On récupère donc le contenu, puis on le remet au navigateur
+ * par un lien de téléchargement, ce qui n'interrompt rien et permet d'afficher une vraie erreur.
+ */
+async function telecharger(url, bouton) {
+  const libelle = bouton ? bouton.textContent : "";
+  if (bouton) { bouton.disabled = true; bouton.textContent = "Préparation…"; }
+  try {
+    const reponse = await fetch(url);
+    if (!reponse.ok) {
+      let message = `Le serveur a répondu ${reponse.status}.`;
+      try { message = (await reponse.json()).erreur || message; } catch {}
+      throw new Error(message);
+    }
+    const entete = reponse.headers.get("Content-Disposition") || "";
+    const nom = (entete.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i) || [])[1]
+                || url.split("/").pop().split("?")[0];
+    const contenu = await reponse.blob();
+    const lien = document.createElement("a");
+    lien.href = URL.createObjectURL(contenu);
+    lien.download = decodeURIComponent(nom);
+    document.body.appendChild(lien);
+    lien.click();
+    lien.remove();
+    setTimeout(() => URL.revokeObjectURL(lien.href), 30000);
+  } finally {
+    if (bouton) { bouton.disabled = false; bouton.textContent = libelle; }
+  }
+}
 async function enregistrer(champs) { await api("/api/parametres", {method:"POST",
   headers:{"Content-Type":"application/json"}, body: JSON.stringify(champs)}); await majEtat(); }
 
@@ -383,10 +417,15 @@ ECRANS.projet = async () => {
     const fermer = () => boite.remove();
     boite.onclick = e => { if (e.target === boite) fermer(); };
     $("#exp-annuler", boite).onclick = fermer;
-    $("#exp-reglages", boite).onclick = () => {
-      location.href = `/api/projets/${encodeURIComponent(nom)}/export`; fermer(); };
-    $("#exp-complet", boite).onclick = () => {
-      location.href = `/api/projets/${encodeURIComponent(nom)}/export?complet=1`; fermer(); };
+    const exporter = async (bouton, complet) => {
+      try {
+        await telecharger(`/api/projets/${encodeURIComponent(nom)}/export`
+                          + (complet ? "?complet=1" : ""), bouton);
+        fermer();
+      } catch (e) { $("#retour-projet").innerHTML = erreurAffichee(e); fermer(); }
+    };
+    $("#exp-reglages", boite).onclick = e => exporter(e.target, false);
+    $("#exp-complet", boite).onclick = e => exporter(e.target, true);
   });
   document.querySelectorAll(".supprimer").forEach(b => b.onclick = async () => {
     const nom = b.dataset.n;
@@ -908,7 +947,10 @@ ECRANS.aesh = async () => {
       </table></div>
     </div>`;
   brancherNotes(valeurs, v => enregistrer({affinites: v}));
-  $("#telecharger-recueil").onclick = () => location.href = "/api/recueil";
+  $("#telecharger-recueil").onclick = async e => {
+    try { await telecharger("/api/recueil", e.target); }
+    catch (err) { $("#depot-recueil-retour").innerHTML = erreurAffichee(err); }
+  };
   brancherDepot("depot-recueil", "/api/import/dispos", (r, retour) => {
     retour.innerHTML = message("succes",
       `<b>${r.reconnus.length} AESH</b> relus (${r.affinites} affinité(s)).`
@@ -1399,10 +1441,22 @@ ECRANS.resultat = async () => {
         ${r.non_couverts.map(n => `<tr><td>${ech(n.eleve)}</td><td class="num">${n.heures} h</td>
           <td>${Object.entries(n.causes).map(([c,v])=>`${ech(c)} (${v})`).join(" · ")}</td></tr>`).join("")}
       </table></div></div>` : ""}`;
-  $("#exp-xlsx").onclick = () => location.href = "/api/export/xlsx";
-  $("#exp-html").onclick = () => location.href = "/api/export/html";
-  $("#exp-eleves").onclick = () => location.href = "/api/export/eleves";
-  $("#exp-eleves-xlsx").onclick = () => location.href = "/api/export/eleves-xlsx";
+  $("#exp-xlsx").onclick = async e => {
+    try { await telecharger("/api/export/xlsx", e.target); }
+    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+  };
+  $("#exp-html").onclick = async e => {
+    try { await telecharger("/api/export/html", e.target); }
+    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+  };
+  $("#exp-eleves").onclick = async e => {
+    try { await telecharger("/api/export/eleves", e.target); }
+    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+  };
+  $("#exp-eleves-xlsx").onclick = async e => {
+    try { await telecharger("/api/export/eleves-xlsx", e.target); }
+    catch (err) { $("#ecran").insertAdjacentHTML("afterbegin", erreurAffichee(err)); }
+  };
   await ajustementAffectations();
 };
 

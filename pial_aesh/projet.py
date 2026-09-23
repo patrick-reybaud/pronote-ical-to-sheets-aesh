@@ -830,7 +830,7 @@ def exporter_projet(nom, complet=False):
     sorties.mkdir(exist_ok=True)
     suffixe = "complet" if complet else "reglages"
     archive = sorties / f"Projet_{re.sub(r'[^A-Za-z0-9_-]+', '_', nom)}_{suffixe}_" \
-                        f"{datetime.now():%Y%m%d_%H%M}.zip"
+                        f"{datetime.now():%Y%m%d_%H%M%S}.zip"
 
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zip_:
         for fichier in sorted(dossier.rglob("*")):

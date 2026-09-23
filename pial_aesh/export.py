@@ -45,7 +45,9 @@ _BORDURE = Border(*[Side("thin", color="AAAAAA")] * 4)
 
 
 def _horodatage():
-    return datetime.now().strftime("%Y%m%d_%H%M")
+    # À la seconde : deux exports lancés dans la même minute écriraient sinon le même fichier,
+    # le second écrasant celui que le navigateur est peut-être en train de lire.
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def _libelle_creneau(h_min, indice):
