@@ -297,11 +297,11 @@ def _contenu(affectations, avec_matiere=True):
 
 def _blocs(grille, parite, jour, nb_creneaux):
     """
-    Découpe une colonne en blocs de créneaux consécutifs identiques.
+    Découpe une colonne (un jour, une parité) en blocs de créneaux consécutifs identiques.
 
     C'est ce qui rend l'emploi du temps lisible : un cours de deux heures devient une cellule
     unique, comme dans ProNote, au lieu de quatre lignes répétant la même chose.
-    Retourne [(premier créneau, hauteur, texte, noms des élèves)].
+    Retourne [(premier créneau, hauteur, texte, noms des élèves, signature)].
     """
     blocs, s = [], 0
     while s < nb_creneaux:
@@ -312,9 +312,36 @@ def _blocs(grille, parite, jour, nb_creneaux):
         fin = s + 1
         while fin < nb_creneaux and _contenu(grille.get((parite, jour, fin), []))[1] == signature:
             fin += 1
-        blocs.append((s, fin - s, texte, noms))
+        blocs.append((s, fin - s, texte, noms, signature))
         s = fin
     return blocs
+
+
+def blocs_jour(grille, jour, nb_creneaux):
+    """
+    Blocs d'une journée, en fusionnant les semaines A et B quand elles portent le même cours.
+
+    Un cours hebdomadaire occupe les deux semaines à l'identique : l'afficher deux fois côte à côte
+    double la largeur sans rien apprendre. On ne sépare donc les demi-colonnes que là où les deux
+    semaines diffèrent réellement — exactement la lecture d'un emploi du temps ProNote.
+
+    Retourne [(premier créneau, hauteur, largeur, colonne, texte, noms)] où « colonne » vaut 0 pour
+    la semaine A, 1 pour la semaine B, et « largeur » 2 quand le bloc couvre les deux.
+    """
+    blocs_a = {b[0]: b for b in _blocs(grille, "A", jour, nb_creneaux)}
+    blocs_b = {b[0]: b for b in _blocs(grille, "B", jour, nb_creneaux)}
+    sortie, fusionnes = [], set()
+    for depart, (_, hauteur, texte, noms, signature) in sorted(blocs_a.items()):
+        jumeau = blocs_b.get(depart)
+        if jumeau and jumeau[1] == hauteur and jumeau[4] == signature:
+            sortie.append((depart, hauteur, 2, 0, texte, noms))
+            fusionnes.add(depart)
+        else:
+            sortie.append((depart, hauteur, 1, 0, texte, noms))
+    for depart, (_, hauteur, texte, noms, _) in sorted(blocs_b.items()):
+        if depart not in fusionnes:
+            sortie.append((depart, hauteur, 1, 1, texte, noms))
+    return sorted(sortie)
 
 
 def _fond_html(noms, couleurs):
@@ -363,32 +390,38 @@ td.h{background:#f2f4f6;font-weight:600;width:74px;font-size:10px}
         parties.append(f"<h2>{html.escape(infos.get('nom', id_aesh))}</h2>"
                        f"<p class='sub'>{infos.get('heures_affectees', 0)} h affectées sur "
                        f"{infos.get('quotite', 0):g} h de quotité · {infos.get('nb_eleves', 0)} élève(s) suivis</p>")
-        colonnes = [(jour, parite) for jour in range(len(JOURS_SEMAINE)) for parite in ("A", "B")]
-        blocs = {(jour, parite): {b[0]: b for b in _blocs(grille, parite, jour, nb_creneaux)}
-                 for jour, parite in colonnes}
-        couvert = {(jour, parite): {s for b in blocs[(jour, parite)].values()
-                                    for s in range(b[0] + 1, b[0] + b[1])}
-                   for jour, parite in colonnes}
-        largeur = round(88 / max(1, len(colonnes)), 3)
+        blocs = {jour: blocs_jour(grille, jour, nb_creneaux) for jour in range(len(JOURS_SEMAINE))}
+        occupees = set()          # (ligne, jour, colonne) couvertes par un bloc commencé plus haut
+        depart_de = {}
+        for jour, liste in blocs.items():
+            for premier, hauteur, largeur, colonne, texte, noms in liste:
+                depart_de[(premier, jour, colonne)] = (hauteur, largeur, texte, noms)
+                for ligne in range(premier, premier + hauteur):
+                    for k in range(largeur):
+                        if (ligne, jour, colonne + k) != (premier, jour, colonne):
+                            occupees.add((ligne, jour, colonne + k))
+        largeur_colonne = round(88 / (len(JOURS_SEMAINE) * 2), 3)
         parties.append("<table><colgroup><col style='width:74px'>"
-                       + f"<col style='width:{largeur}%'>" * len(colonnes) + "</colgroup>"
-                       + "<tr><th rowspan='2'>Horaires</th>"
+                       + f"<col style='width:{largeur_colonne}%'>" * (len(JOURS_SEMAINE) * 2)
+                       + "</colgroup><tr><th rowspan='2'>Horaires</th>"
                        + "".join(f"<th colspan='2'>{j}</th>" for j in JOURS_SEMAINE) + "</tr><tr>"
                        + "".join("<th class='ab'>sem. A</th><th class='ab'>sem. B</th>"
                                  for _ in JOURS_SEMAINE) + "</tr>")
         for s in range(nb_creneaux):
             parties.append(f"<tr><td class='h'>{_libelle_creneau(h_min, s)}</td>")
-            for jour, parite in colonnes:
-                if s in couvert[(jour, parite)]:
-                    continue
-                bloc = blocs[(jour, parite)].get(s)
-                if not bloc:
-                    parties.append("<td></td>")
-                    continue
-                _, hauteur, texte, noms = bloc
-                rowspan = f" rowspan='{hauteur}'" if hauteur > 1 else ""
-                parties.append(f"<td{rowspan} style=\"{_fond_html(noms, couleurs)}\">"
-                               f"{html.escape(texte)}</td>")
+            for jour in range(len(JOURS_SEMAINE)):
+                for colonne in (0, 1):
+                    if (s, jour, colonne) in occupees:
+                        continue
+                    bloc = depart_de.get((s, jour, colonne))
+                    if not bloc:
+                        parties.append("<td></td>")
+                        continue
+                    hauteur, largeur, texte, noms = bloc
+                    attributs = (f" rowspan='{hauteur}'" if hauteur > 1 else "") \
+                                + (f" colspan='{largeur}'" if largeur > 1 else "")
+                    parties.append(f"<td{attributs} style=\"{_fond_html(noms, couleurs)}\">"
+                                   f"{html.escape(texte)}</td>")
             parties.append("</tr>")
         parties.append("</table>")
     parties.append("</body></html>")
@@ -450,18 +483,20 @@ def emplois_du_temps_xlsx(projet, resultat):
             cellule.border = _BORDURE
             for _, _, colonne in colonnes:
                 feuille.cell(row=5 + s, column=colonne).border = _BORDURE
-        for jour, parite, colonne in colonnes:
-            for premier, hauteur, texte, noms in _blocs(grille, parite, jour, nb_creneaux):
-                case = feuille.cell(row=5 + premier, column=colonne, value=texte)
+        for jour in range(len(JOURS_SEMAINE)):
+            for premier, hauteur, largeur, colonne, texte, noms in blocs_jour(grille, jour, nb_creneaux):
+                depart = 2 + jour * 2 + colonne
+                case = feuille.cell(row=5 + premier, column=depart, value=texte)
                 case.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
                 case.font = Font(size=8)
                 case.border = _BORDURE
                 # Excel ne sait pas faire de bandes : plusieurs élèves sur le même créneau prennent
                 # la couleur du premier, et leurs noms restent tous écrits dans la cellule.
                 case.fill = PatternFill("solid", fgColor=couleurs.get(noms[0], "D9E8FA"))
-                if hauteur > 1:
-                    feuille.merge_cells(start_row=5 + premier, start_column=colonne,
-                                        end_row=5 + premier + hauteur - 1, end_column=colonne)
+                if hauteur > 1 or largeur > 1:
+                    feuille.merge_cells(start_row=5 + premier, start_column=depart,
+                                        end_row=5 + premier + hauteur - 1,
+                                        end_column=depart + largeur - 1)
         feuille.freeze_panes = "B5"
         feuille.sheet_view.showGridLines = False
 

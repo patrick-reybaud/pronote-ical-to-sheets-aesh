@@ -253,10 +253,18 @@ ECRANS.projet = async () => {
         <td style="font-size:12px;white-space:nowrap">${ech((p.modifie_le||"").replace("T"," ").slice(0,16))}</td>
         <td style="white-space:nowrap">
           <button class="action secondaire ouvrir" data-n="${ech(p.nom)}">Ouvrir</button>
+          <button class="action secondaire exporter" data-n="${ech(p.nom)}">Exporter…</button>
           <button class="action supprimer" data-n="${ech(p.nom)}"
                   style="background:#fff;color:#b3261e;border:1px solid #b3261e">Supprimer</button>
         </td></tr>`).join("")}
       </table></div>` : ""}
+    <div class="carte">
+      <b>Importer un projet</b>
+      <p class="aide" style="margin:6px 0 12px">Une archive <code>.zip</code> produite par
+        « Exporter… », depuis ce poste ou un autre. Le projet est recréé sous son nom d'origine ;
+        s'il existe déjà, une copie numérotée est créée — rien n'est écrasé.</p>
+      ${zoneDepot("depot-projet", "Déposez une archive de projet", "(.zip)", ".zip", false)}
+    </div>
     <div id="retour-projet"></div>`;
   const ouvrir = async nom => {
     try { E = await api("/api/projets", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -267,6 +275,39 @@ ECRANS.projet = async () => {
   $("#creer").onclick = () => ouvrir($("#nom-projet").value);
   $("#nom-projet").onkeydown = e => { if (e.key === "Enter") ouvrir(e.target.value); };
   document.querySelectorAll(".ouvrir").forEach(b => b.onclick = () => ouvrir(b.dataset.n));
+  brancherDepot("depot-projet", "/api/projets/importer", (r, retour) => {
+    retour.innerHTML = message("succes",
+      `Projet <b>${ech(r.nom)}</b> importé — fichier PIAL ${r.pial ? "présent" : "<b>absent</b>"},
+       ${r.ics} emploi(s) du temps.`
+      + (r.ics ? "" : "<br>Redéposez les exports ProNote à l'étape « Import » : tout le reste du "
+                      + "travail est conservé."));
+    setTimeout(dessiner, 2200);
+  });
+  document.querySelectorAll(".exporter").forEach(b => b.onclick = () => {
+    const nom = b.dataset.n;
+    const boite = document.createElement("div");
+    boite.className = "voile";
+    boite.innerHTML = `<div class="fenetre">
+      <h3 style="margin:0 0 10px">Exporter « ${ech(nom)} »</h3>
+      <p class="aide" style="margin:0 0 14px">Tout le travail — établissement, semaines types, efforts,
+        affinités, disponibilités, règles, pondérations et dernier résultat — tient dans le fichier de
+        projet. Les exports ProNote, eux, pèsent plusieurs centaines de mégaoctets et se réimportent
+        en deux clics.</p>
+      <div class="ligne"><button class="action" id="exp-reglages">Réglages seuls (léger)</button>
+        <span style="color:#5b6570">recommandé : circule par courriel, les .ics sont à redéposer</span></div>
+      <div class="ligne"><button class="action secondaire" id="exp-complet">Tout, exports ProNote compris</button>
+        <span style="color:#5b6570">le projet se rouvre tel quel, mais l'archive est volumineuse</span></div>
+      <div class="ligne" style="justify-content:flex-end;margin:14px 0 0">
+        <button class="action secondaire" id="exp-annuler">Annuler</button></div></div>`;
+    document.body.appendChild(boite);
+    const fermer = () => boite.remove();
+    boite.onclick = e => { if (e.target === boite) fermer(); };
+    $("#exp-annuler", boite).onclick = fermer;
+    $("#exp-reglages", boite).onclick = () => {
+      location.href = `/api/projets/${encodeURIComponent(nom)}/export`; fermer(); };
+    $("#exp-complet", boite).onclick = () => {
+      location.href = `/api/projets/${encodeURIComponent(nom)}/export?complet=1`; fermer(); };
+  });
   document.querySelectorAll(".supprimer").forEach(b => b.onclick = async () => {
     const nom = b.dataset.n;
     if (!confirm(`Supprimer définitivement le projet « ${nom} » ?\n\n`

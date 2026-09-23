@@ -19,7 +19,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from . import export
 from .affectation import POIDS_DEFAUT, REGLES_DURES, REGLES_SOUPLES
 from .matieres import EFFORTS_PAR_DEFAUT, FAMILLES, NON_CLASSE
-from .projet import DOSSIER_PROJETS, lister_projets, ouvrir_projet, supprimer_projet
+from .projet import (DOSSIER_PROJETS, exporter_projet, importer_projet, lister_projets,
+                     ouvrir_projet, supprimer_projet)
 from .pronote import JOURS, PAS_MINUTES
 
 RACINE_STATIQUE = Path(__file__).resolve().parent / "static"
@@ -83,6 +84,35 @@ def api_ouvrir_projet():
         raise Erreur("Donnez un nom au projet (par exemple « Calanques-2 2026-2027 »).")
     _courant["projet"] = ouvrir_projet(nom)
     return jsonify(api_etat().json)
+
+
+@application.get("/api/projets/<nom>/export")
+def api_exporter_projet(nom):
+    complet = request.args.get("complet") in ("1", "true", "oui")
+    try:
+        archive = exporter_projet(nom, complet=complet)
+    except ValueError as e:
+        raise Erreur(str(e))
+    return send_from_directory(archive.parent, archive.name, as_attachment=True)
+
+
+@application.post("/api/projets/importer")
+def api_importer_projet():
+    fichiers = [f for f in request.files.getlist("fichiers")
+                if Path(f.filename).suffix.lower() == ".zip"]
+    if not fichiers:
+        raise Erreur("Déposez une archive .zip produite par « Exporter le projet ».")
+    depot = DOSSIER_PROJETS / ".import"
+    depot.mkdir(parents=True, exist_ok=True)
+    chemin = depot / Path(fichiers[0].filename).name
+    chemin.write_bytes(fichiers[0].read())
+    try:
+        nom, pial, ics = importer_projet(chemin)
+    except (ValueError, KeyError) as e:
+        raise Erreur(f"Archive illisible : {e}")
+    finally:
+        chemin.unlink(missing_ok=True)
+    return jsonify({"nom": nom, "pial": pial, "ics": ics})
 
 
 @application.delete("/api/projets/<nom>")

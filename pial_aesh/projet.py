@@ -15,7 +15,9 @@ Chaque étape est indépendante et rejouable : on peut revenir en arrière sans 
 """
 
 import json
+import re
 import shutil
+import zipfile
 from collections import Counter, defaultdict
 from itertools import combinations
 from datetime import date, datetime
@@ -544,6 +546,105 @@ def lister_projets():
     return sorted(projets, key=lambda p: p["modifie_le"], reverse=True)
 
 
+# Le fichier de projet, seul, contient tout le travail : établissement, semaines types, efforts,
+# affinités, disponibilités, règles, pondérations, appariements forcés et dernier résultat. Les
+# exports ProNote ne sont que de la matière première réimportable, d'où les deux modes ci-dessous.
+EXTENSIONS_REGLAGES = {".json", ".ods", ".xlsx", ".xlsm"}
+
+
+def nom_de_dossier(nom):
+    """
+    Nom de dossier sûr pour un projet.
+
+    Un seul endroit décide de cette transformation : l'import et l'ouverture doivent aboutir au
+    même dossier, faute de quoi un projet importé sous un nom contenant une parenthèse s'ouvre
+    dans un dossier vide créé à côté.
+    """
+    propre = "".join(c for c in (nom or "").strip() if c.isalnum() or c in " -_")
+    return re.sub(r"\s+", " ", propre).strip() or "Projet"
+
+
+def nom_disponible(nom):
+    """Variante libre du nom demandé : « Projet », « Projet 2 », « Projet 3 »…"""
+    base = nom_de_dossier(nom)
+    candidat, n = base, 2
+    while (DOSSIER_PROJETS / candidat / "projet.json").exists():
+        candidat, n = nom_de_dossier(f"{base} {n}"), n + 1
+    return candidat
+
+
+def exporter_projet(nom, complet=False):
+    """
+    Archive .zip d'un projet, écrite dans son dossier « sorties ».
+
+    Par défaut on n'emporte que les réglages et le fichier PIAL — moins d'un mégaoctet, ce qui
+    circule par courriel. « complet » ajoute les exports ProNote importés, soit plusieurs centaines
+    de mégaoctets : utile pour rejouer le projet à l'identique sur un autre poste, inutile si les
+    exports sont disponibles par ailleurs.
+    """
+    dossier = (DOSSIER_PROJETS / nom).resolve()
+    if dossier.parent != DOSSIER_PROJETS.resolve() or not (dossier / "projet.json").exists():
+        raise ValueError(f"Projet introuvable : {nom}")
+    sorties = dossier / "sorties"
+    sorties.mkdir(exist_ok=True)
+    suffixe = "complet" if complet else "reglages"
+    archive = sorties / f"Projet_{re.sub(r'[^A-Za-z0-9_-]+', '_', nom)}_{suffixe}_" \
+                        f"{datetime.now():%Y%m%d_%H%M}.zip"
+
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zip_:
+        for fichier in sorted(dossier.rglob("*")):
+            if not fichier.is_file() or fichier == archive:
+                continue
+            relatif = fichier.relative_to(dossier)
+            if relatif.parts[0] == "sorties":
+                continue                                  # les sorties se régénèrent
+            if not complet and fichier.suffix.lower() not in EXTENSIONS_REGLAGES:
+                continue
+            zip_.write(fichier, relatif)
+        zip_.writestr("LISEZ-MOI.txt",
+                      f"Projet « {nom} » — archive {suffixe}\n"
+                      f"exportée le {datetime.now():%d/%m/%Y à %H:%M}\n\n"
+                      + ("Contient les réglages ET les exports ProNote : le projet se rouvre tel quel.\n"
+                         if complet else
+                         "Contient les réglages et le fichier PIAL, mais PAS les exports ProNote (.ics),\n"
+                         "trop volumineux. Après import, redéposez-les à l'étape « Import » : les\n"
+                         "appariements et tout le travail sont conservés.\n")
+                      + "\nPour réimporter : écran « Projet » de l'application, zone « Importer un projet ».\n")
+    return archive
+
+
+def importer_projet(chemin_zip, nom=None):
+    """Recrée un projet à partir d'une archive. Retourne le nom du projet créé."""
+    with zipfile.ZipFile(chemin_zip) as zip_:
+        noms = zip_.namelist()
+        if "projet.json" not in noms:
+            raise ValueError("Cette archive ne contient pas de fichier « projet.json » : "
+                             "ce n'est pas un projet exporté par l'application.")
+        for interne in noms:
+            cible = (DOSSIER_PROJETS / "x" / interne).resolve()
+            if DOSSIER_PROJETS.resolve() not in cible.parents:
+                raise ValueError(f"Archive refusée : elle contient un chemin sortant du dossier "
+                                 f"des projets ({interne}).")
+        etat = json.loads(zip_.read("projet.json").decode("utf-8"))
+        nom = nom_disponible(nom or etat.get("nom") or Path(chemin_zip).stem)
+        destination = DOSSIER_PROJETS / nom
+        destination.mkdir(parents=True)
+        zip_.extractall(destination)
+
+    projet = Projet(destination)
+    projet.etat["nom"] = nom
+    # Les chemins enregistrés pointaient vers l'ancien poste : on les recale sur le nouveau dossier.
+    ancien = projet.etat.get("fichier_pial")
+    if ancien:
+        candidat = destination / "sources" / Path(ancien).name
+        projet.etat["fichier_pial"] = str(candidat) if candidat.exists() else None
+    dossier_ics = destination / "sources" / "ics"
+    projet.etat["sources_ics"] = [str(dossier_ics)] if any(dossier_ics.glob("*.ics")) else []
+    projet.etat["resultat"] = projet.etat.get("resultat")
+    projet.enregistrer()
+    return nom, bool(projet.etat["fichier_pial"]), len(list(dossier_ics.glob("*.ics")))
+
+
 def supprimer_projet(nom):
     """
     Supprime définitivement un projet et tout ce qu'il contient.
@@ -582,5 +683,4 @@ def resume_projet(nom):
 
 
 def ouvrir_projet(nom):
-    nom = "".join(c for c in (nom or "").strip() if c.isalnum() or c in " -_") or "Projet"
-    return Projet(DOSSIER_PROJETS / nom)
+    return Projet(DOSSIER_PROJETS / nom_de_dossier(nom))

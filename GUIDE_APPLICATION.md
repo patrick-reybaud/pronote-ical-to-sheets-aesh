@@ -47,12 +47,33 @@ autre et l'affiche dans la fenêtre.
 
 | Quoi | Où |
 |---|---|
-| Projets, imports, résultats, exports | `Documents/PIAL-AESH/<nom du projet>/` (Windows et Mac) |
-| Fichiers importés (recopiés) | `…/<projet>/sources/` |
-| Emplois du temps produits | `…/<projet>/sorties/` |
-| Tout l'état du travail | `…/<projet>/projet.json` |
+| Dossier des projets | `PIAL-AESH/` dans votre dossier personnel — `C:\Users\<vous>\PIAL-AESH` sous Windows, `/Users/<vous>/PIAL-AESH` sur Mac |
+| **Tout le travail d'un projet** | `…/<projet>/`**`projet.json`** |
+| Fichiers importés (recopiés) | `…/<projet>/sources/` — le fichier PIAL, et les `.ics` dans `sources/ics/` |
+| Emplois du temps et archives produits | `…/<projet>/sorties/` |
 
-Un projet est autonome : le copier suffit à le transporter d'un poste à l'autre.
+**`projet.json` contient absolument tout le travail** : établissement retenu, semaines types, plage
+horaire, efforts par matière, affinités, disponibilités des AESH, matières retirées, règles de
+mutualisation, incompatibilités entre élèves, pondérations, appariements forcés, cours confiés à la
+main et dernier résultat calculé. C'est un fichier texte lisible, que l'on peut ouvrir, sauvegarder
+ou versionner.
+
+### Déplacer un projet d'un poste à l'autre
+
+Sur l'écran **Projet**, le bouton **Exporter…** produit une archive `.zip`, avec deux choix :
+
+| | Contenu | Poids |
+|---|---|---|
+| **Réglages seuls** *(recommandé)* | `projet.json` + le fichier PIAL | moins d'un mégaoctet — circule par courriel |
+| **Tout** | + les exports ProNote importés | plusieurs centaines de mégaoctets |
+
+Sur l'autre poste, déposez l'archive dans la zone **Importer un projet** du même écran. Avec
+l'export léger, il reste à redéposer les `.ics` à l'étape « Import » : **tout le reste du travail est
+conservé**, y compris les appariements forcés et le dernier calcul.
+
+Si le projet existe déjà sous ce nom, une copie numérotée est créée — rien n'est jamais écrasé.
+
+Copier le dossier du projet à la main fonctionne tout aussi bien.
 
 ---
 
@@ -194,7 +215,9 @@ final.
 ### 9 · Emplois du temps
 Chaque élève a **sa couleur**, rappelée en légende ; un créneau partagé par deux élèves apparaît en
 bandes obliques. Les créneaux consécutifs identiques sont **fusionnés en un seul bloc**, comme dans
-ProNote, au lieu de répéter la même chose toutes les demi-heures.
+ProNote, au lieu de répéter la même chose toutes les demi-heures. Et lorsqu'un cours a lieu **toutes
+les semaines**, la cellule couvre les deux demi-colonnes « sem. A » et « sem. B » : les colonnes ne
+se séparent que là où les deux semaines diffèrent réellement.
 
 #### Changer l'AESH d'un cours
 
