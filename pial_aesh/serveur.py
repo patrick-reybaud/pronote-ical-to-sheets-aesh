@@ -22,7 +22,7 @@ from . import export
 from .affectation import POIDS_DEFAUT, REGLES_DURES, REGLES_SOUPLES
 from .matieres import EFFORTS_PAR_DEFAUT, FAMILLES, NON_CLASSE
 from .projet import (DOSSIER_PROJETS, exporter_projet, importer_projet, lister_projets,
-                     ouvrir_projet, supprimer_projet)
+                     ouvrir_dans_explorateur, ouvrir_projet, supprimer_projet)
 from .pronote import JOURS, PAS_MINUTES
 
 RACINE_STATIQUE = Path(__file__).resolve().parent / "static"
@@ -105,21 +105,47 @@ def api_exporter_projet(nom):
 
 @application.post("/api/projets/importer")
 def api_importer_projet():
-    fichiers = [f for f in request.files.getlist("fichiers")
-                if Path(f.filename).suffix.lower() == ".zip"]
-    if not fichiers:
-        raise Erreur("Déposez une archive .zip produite par « Exporter le projet ».")
+    """
+    Recrée un projet à partir d'une archive .zip ou d'un dossier de projet déposé tel quel.
+
+    Les deux sont acceptés parce que certains navigateurs décompressent les archives au
+    téléchargement : l'utilisateur récupère alors un dossier, et il n'y a aucune raison de le lui
+    reprocher.
+    """
+    recus = request.files.getlist("fichiers")
+    if not recus:
+        raise Erreur("Rien n'a été déposé.")
+    archives = [f for f in recus if Path(f.filename).suffix.lower() == ".zip"]
     depot = DOSSIER_PROJETS / ".import"
     depot.mkdir(parents=True, exist_ok=True)
-    chemin = depot / Path(fichiers[0].filename).name
-    chemin.write_bytes(fichiers[0].read())
+    chemin = None
     try:
-        nom, pial, ics = importer_projet(chemin)
-    except (ValueError, KeyError) as e:
-        raise Erreur(f"Archive illisible : {e}")
+        if archives:
+            chemin = depot / "archive.zip"
+            chemin.write_bytes(archives[0].read())
+            nom, pial, ics = importer_projet(chemin)
+        else:
+            fichiers = [(f.filename, f.read()) for f in recus]
+            if not any(Path(c).name == "projet.json" for c, _ in fichiers):
+                raise Erreur("Ce dossier ne contient pas de fichier « projet.json ». Déposez le "
+                             "dossier du projet lui-même (celui qui contient projet.json), ou "
+                             "l'archive .zip produite par « Exporter… ».")
+            nom, pial, ics = importer_projet(None, fichiers=fichiers)
+    except ValueError as e:
+        raise Erreur(str(e))
     finally:
-        chemin.unlink(missing_ok=True)
+        if chemin:
+            chemin.unlink(missing_ok=True)
+    journal.info("projet importé : %s (PIAL %s, %d ICS)", nom, "oui" if pial else "non", ics)
     return jsonify({"nom": nom, "pial": pial, "ics": ics})
+
+
+@application.post("/api/dossier")
+def api_ouvrir_dossier():
+    """Ouvre le dossier de travail dans l'explorateur de fichiers du poste."""
+    nom = (request.json or {}).get("projet")
+    cible = ouvrir_dans_explorateur(nom)
+    return jsonify({"dossier": str(cible)})
 
 
 @application.delete("/api/projets/<nom>")

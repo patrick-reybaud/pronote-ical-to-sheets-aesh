@@ -182,7 +182,7 @@ function brancherDepot(id, url, apresEnvoi) {
 
     const envoyerLot = async (lot, estDernier, profondeur = 0) => {
       const corps = new FormData();
-      for (const f of lot) corps.append("fichiers", f);
+      for (const f of lot) corps.append("fichiers", f, f.webkitRelativePath || f.name);
       for (let essai = 1; essai <= ESSAIS; essai++) {
         try {
           return await api(url + (estDernier ? "?dernier=1" : ""), {method: "POST", body: corps});
@@ -276,6 +276,8 @@ ECRANS.projet = async () => {
       <div class="ligne">
         <input type="text" id="nom-projet" placeholder="Nom du projet, ex. Calanques-2 2026-2027" style="width:380px">
         <button class="action" id="creer">Créer ou ouvrir</button>
+        <button class="action secondaire" id="ouvrir-dossier" style="margin-left:auto">
+          Ouvrir le dossier de travail</button>
       </div>
     </div>
     ${projets.length ? `<div class="carte"><b>Projets existants</b><table style="margin-top:8px">
@@ -294,10 +296,12 @@ ECRANS.projet = async () => {
       </table></div>` : ""}
     <div class="carte">
       <b>Importer un projet</b>
-      <p class="aide" style="margin:6px 0 12px">Une archive <code>.zip</code> produite par
-        « Exporter… », depuis ce poste ou un autre. Le projet est recréé sous son nom d'origine ;
-        s'il existe déjà, une copie numérotée est créée — rien n'est écrasé.</p>
-      ${zoneDepot("depot-projet", "Déposez une archive de projet", "(.zip)", ".zip", false)}
+      <p class="aide" style="margin:6px 0 12px">Déposez l'archive <code>.zip</code> produite par
+        « Exporter… », <b>ou directement le dossier du projet</b> si votre navigateur a déjà
+        décompressé l'archive — les deux fonctionnent. Le projet est recréé sous son nom d'origine ;
+        s'il existe déjà, une copie numérotée est créée, rien n'est écrasé.</p>
+      ${zoneDepot("depot-projet", "Déposez une archive ou un dossier de projet",
+                  "archive .zip, ou le dossier contenant projet.json", "", false)}
     </div>
     <div id="retour-projet"></div>`;
   const ouvrir = async nom => {
@@ -305,6 +309,11 @@ ECRANS.projet = async () => {
             body: JSON.stringify({nom})});
       POP = null; etape = E.pial?.charge ? "etablissement" : "import"; dessinerNav(); dessiner();
     } catch (e) { $("#retour-projet").innerHTML = erreurAffichee(e); }
+  };
+  $("#ouvrir-dossier").onclick = async () => {
+    try { await api("/api/dossier", {method:"POST", headers:{"Content-Type":"application/json"},
+                                     body: JSON.stringify({})}); }
+    catch (e) { $("#retour-projet").innerHTML = erreurAffichee(e); }
   };
   $("#creer").onclick = () => ouvrir($("#nom-projet").value);
   $("#nom-projet").onkeydown = e => { if (e.key === "Enter") ouvrir(e.target.value); };

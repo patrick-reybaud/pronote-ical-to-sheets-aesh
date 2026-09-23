@@ -47,7 +47,7 @@ autre et l'affiche dans la fenêtre.
 
 | Quoi | Où |
 |---|---|
-| Dossier des projets | `PIAL-AESH/` dans votre dossier personnel — `C:\Users\<vous>\PIAL-AESH` sous Windows, `/Users/<vous>/PIAL-AESH` sur Mac |
+| **Dossier de travail** | `PIAL-AESH/` dans votre dossier personnel — `C:\Users\<vous>\PIAL-AESH` sous Windows, `/Users/<vous>/PIAL-AESH` sur Mac. Le bouton **Ouvrir le dossier de travail**, sur l'écran « Projet », vous y emmène directement. |
 | **Tout le travail d'un projet** | `…/<projet>/`**`projet.json`** |
 | Fichiers importés (recopiés) | `…/<projet>/sources/` — le fichier PIAL, et les `.ics` dans `sources/ics/` |
 | Emplois du temps et archives produits | `…/<projet>/sorties/` |
@@ -71,6 +71,10 @@ Sur l'écran **Projet**, le bouton **Exporter…** produit une archive `.zip`, a
 Sur l'autre poste, déposez l'archive dans la zone **Importer un projet** du même écran. Avec
 l'export léger, il reste à redéposer les `.ics` à l'étape « Import » : **tout le reste du travail est
 conservé**, y compris les appariements forcés et le dernier calcul.
+
+Certains navigateurs — Safari en particulier — décompressent les archives dès le téléchargement :
+vous obtenez alors un **dossier** et non un `.zip`. Ce n'est pas un problème, **déposez le dossier
+tel quel**, l'import accepte les deux.
 
 Si le projet existe déjà sous ce nom, une copie numérotée est créée — rien n'est jamais écrasé.
 

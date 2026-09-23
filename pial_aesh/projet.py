@@ -15,8 +15,11 @@ Chaque étape est indépendante et rejouable : on peut revenir en arrière sans 
 """
 
 import json
+import os
 import re
 import shutil
+import subprocess
+import sys
 import zipfile
 from collections import Counter, defaultdict
 from itertools import combinations
@@ -613,23 +616,92 @@ def exporter_projet(nom, complet=False):
     return archive
 
 
-def importer_projet(chemin_zip, nom=None):
-    """Recrée un projet à partir d'une archive. Retourne le nom du projet créé."""
+def chemin_sur(relatif):
+    """
+    Chemin relatif nettoyé, ou None s'il cherche à sortir du dossier de destination.
+
+    Une archive ou un dossier déposé vient de l'extérieur : on n'écrit jamais un chemin absolu
+    ni un « .. » venus de là.
+    """
+    morceaux = [m for m in Path(str(relatif).replace("\\", "/")).parts
+                if m not in ("", ".", "/") and not m.endswith(":")]
+    if any(m == ".." for m in morceaux) or not morceaux:
+        return None
+    return Path(*morceaux)
+
+
+def _deballer_archive(chemin_zip, destination):
+    """Extrait une archive de projet. Retourne le contenu de projet.json."""
     with zipfile.ZipFile(chemin_zip) as zip_:
-        noms = zip_.namelist()
-        if "projet.json" not in noms:
+        interne = {chemin_sur(n): n for n in zip_.namelist() if chemin_sur(n)}
+        racine = next((sur for sur in interne if sur.name == "projet.json"), None)
+        if racine is None:
             raise ValueError("Cette archive ne contient pas de fichier « projet.json » : "
                              "ce n'est pas un projet exporté par l'application.")
-        for interne in noms:
-            cible = (DOSSIER_PROJETS / "x" / interne).resolve()
-            if DOSSIER_PROJETS.resolve() not in cible.parents:
-                raise ValueError(f"Archive refusée : elle contient un chemin sortant du dossier "
-                                 f"des projets ({interne}).")
-        etat = json.loads(zip_.read("projet.json").decode("utf-8"))
-        nom = nom_disponible(nom or etat.get("nom") or Path(chemin_zip).stem)
-        destination = DOSSIER_PROJETS / nom
-        destination.mkdir(parents=True)
-        zip_.extractall(destination)
+        # L'archive peut avoir été recompressée avec un dossier englobant : on s'aligne dessus.
+        prefixe = racine.parent
+        etat = json.loads(zip_.read(interne[racine]).decode("utf-8"))
+        for sur, brut in interne.items():
+            if brut.endswith("/"):
+                continue
+            try:
+                relatif = sur.relative_to(prefixe)
+            except ValueError:
+                continue
+            cible = destination / relatif
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            cible.write_bytes(zip_.read(brut))
+    return etat
+
+
+def importer_projet(source, nom=None, fichiers=None):
+    """
+    Recrée un projet, à partir d'une archive .zip **ou** d'un dossier de projet déposé tel quel.
+
+    Les navigateurs décompressent parfois les archives au téléchargement : l'utilisateur se retrouve
+    avec un dossier et non un .zip. Refuser ce dossier serait lui reprocher un réglage de son
+    navigateur, on l'accepte donc aussi. « fichiers » est alors une liste (chemin relatif, contenu).
+    """
+    destination = None
+    try:
+        if fichiers is not None:
+            entrees = [(chemin_sur(c), contenu) for c, contenu in fichiers]
+            entrees = [(c, contenu) for c, contenu in entrees if c]
+            racine = next((c for c, _ in entrees if c.name == "projet.json"), None)
+            if racine is None:
+                raise ValueError("Le dossier déposé ne contient pas de fichier « projet.json » : "
+                                 "ce n'est pas un projet exporté par l'application.")
+            prefixe = racine.parent
+            etat = json.loads(next(contenu for c, contenu in entrees if c == racine).decode("utf-8"))
+            nom = nom_disponible(nom or etat.get("nom") or (prefixe.name if prefixe.parts else "Projet"))
+            destination = DOSSIER_PROJETS / nom
+            destination.mkdir(parents=True)
+            for chemin, contenu in entrees:
+                try:
+                    relatif = chemin.relative_to(prefixe)
+                except ValueError:
+                    continue
+                cible = destination / relatif
+                cible.parent.mkdir(parents=True, exist_ok=True)
+                cible.write_bytes(contenu)
+        else:
+            with zipfile.ZipFile(source) as zip_:
+                racine = next((chemin_sur(n) for n in zip_.namelist()
+                               if chemin_sur(n) and chemin_sur(n).name == "projet.json"), None)
+                if racine is None:
+                    raise ValueError("Cette archive ne contient pas de fichier « projet.json » : "
+                                     "ce n'est pas un projet exporté par l'application.")
+                etat = json.loads(zip_.read(
+                    next(n for n in zip_.namelist()
+                         if chemin_sur(n) and chemin_sur(n).name == "projet.json")).decode("utf-8"))
+            nom = nom_disponible(nom or etat.get("nom") or Path(source).stem)
+            destination = DOSSIER_PROJETS / nom
+            destination.mkdir(parents=True)
+            _deballer_archive(source, destination)
+    except Exception:
+        if destination and destination.exists():
+            shutil.rmtree(destination, ignore_errors=True)
+        raise
 
     projet = Projet(destination)
     projet.etat["nom"] = nom
@@ -640,9 +712,21 @@ def importer_projet(chemin_zip, nom=None):
         projet.etat["fichier_pial"] = str(candidat) if candidat.exists() else None
     dossier_ics = destination / "sources" / "ics"
     projet.etat["sources_ics"] = [str(dossier_ics)] if any(dossier_ics.glob("*.ics")) else []
-    projet.etat["resultat"] = projet.etat.get("resultat")
     projet.enregistrer()
     return nom, bool(projet.etat["fichier_pial"]), len(list(dossier_ics.glob("*.ics")))
+
+
+def ouvrir_dans_explorateur(nom=None):
+    """Ouvre le dossier des projets (ou celui d'un projet) dans l'explorateur de fichiers du poste."""
+    cible = DOSSIER_PROJETS if not nom else (DOSSIER_PROJETS / nom_de_dossier(nom))
+    cible.mkdir(parents=True, exist_ok=True)
+    if sys.platform.startswith("win"):
+        os.startfile(cible)                                     # noqa: S606 — chemin construit par nous
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(cible)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(cible)], check=False)
+    return cible
 
 
 def supprimer_projet(nom):
