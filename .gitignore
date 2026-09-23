@@ -63,3 +63,8 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Application PIAL-AESH : dossier de travail et données importées
+Gestion_Pial/
+PIAL-AESH/
+pial_aesh/__pycache__/

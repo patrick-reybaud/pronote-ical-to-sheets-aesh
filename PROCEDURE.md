@@ -198,6 +198,22 @@ python generer_edt.py --annee 2026-2027 --google --nom "EDT_Eleves_AESH_2026-202
 
 ---
 
+## 3 bis. Chaîne AESH (`aesh.py`) — en cours de construction
+
+Une fois les emplois du temps élèves générés, la suite consiste à recueillir les disponibilités des AESH puis à
+calculer les affectations. Les étapes déjà utilisables sont décrites dans le
+[README, section « Chaîne 2 »](README.md#chaîne-2--affectation-des-aesh-aeshpy) :
+
+```bash
+python aesh.py matieres    # référentiel des matières (à relire une fois)
+python aesh.py liste       # liste des AESH (à relire : colonnes « actif » et « quotite_retenue »)
+python aesh.py saisie      # aperçu local du classeur de recueil
+python aesh.py saisie --google --partager-aesh --echeance "vendredi 2 octobre"
+```
+
+Cette procédure sera complétée (collecte des réponses, calcul des affectations, publication des emplois du temps
+AESH) au fur et à mesure que ces étapes seront disponibles.
+
 ## 4. Mises à jour en cours d'année
 
 Le script **crée un nouveau classeur à chaque exécution** ; il ne met pas à jour un classeur existant.
