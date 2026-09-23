@@ -15,8 +15,10 @@ import logging
 import time
 import traceback
 from pathlib import Path
+from urllib.parse import quote
 
 from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.exceptions import HTTPException
 
 from . import export
 from .affectation import POIDS_DEFAUT, REGLES_DURES, REGLES_SOUPLES
@@ -43,6 +45,37 @@ journal = logging.getLogger("pial.serveur")
 _courant = {"projet": None}
 
 
+def _fichier_pret(chemin):
+    """
+    Annonce un fichier fabriqué, au lieu de le renvoyer dans la foulée.
+
+    Les routes d'export reconstruisent le fichier à chaque appel. Or le gestionnaire de
+    téléchargement d'un navigateur redemande volontiers la même adresse — pour reprendre, pour
+    vérifier, ou simplement parce qu'il refait la requête pour son propre compte. Il obtenait alors
+    un fichier recalculé, de taille et d'empreinte différentes, et abandonnait : « Zéro ko sur
+    145 ko — interrompu ».
+
+    La fabrication renvoie donc l'adresse d'un fichier déjà écrit sur le disque, servi par
+    « /api/telechargement/… » — une adresse stable, qu'on peut redemander autant de fois qu'on veut
+    avec toujours les mêmes octets.
+    """
+    return jsonify({"projet": chemin.parent.parent.name, "fichier": chemin.name,
+                    "octets": chemin.stat().st_size,
+                    "adresse": f"/api/telechargement/{quote(chemin.parent.parent.name)}"
+                               f"/{quote(chemin.name)}"})
+
+
+@application.get("/api/telechargement/<projet>/<fichier>")
+def api_telechargement(projet, fichier):
+    """Sert un fichier déjà fabriqué, sans rien recalculer."""
+    dossier = (DOSSIER_PROJETS / projet / "sorties").resolve()
+    if DOSSIER_PROJETS.resolve() not in dossier.parents or not dossier.is_dir():
+        raise Erreur("Ce fichier n'existe plus. Relancez l'export.")
+    if not (dossier / fichier).is_file():
+        raise Erreur("Ce fichier n'existe plus. Relancez l'export.")
+    return send_from_directory(dossier, fichier, as_attachment=True)
+
+
 def projet_courant():
     if _courant["projet"] is None:
         raise Erreur("Aucun projet ouvert. Créez-en un ou ouvrez-en un depuis l'écran d'accueil.")
@@ -57,6 +90,14 @@ class Erreur(Exception):
 def _erreur_metier(e):
     journal.warning("refus sur %s %s : %s", request.method, request.path, e)
     return jsonify({"erreur": str(e)}), 400
+
+
+@application.errorhandler(HTTPException)
+def _erreur_http(e):
+    # Sans ceci, un 404 ressortait en « Erreur inattendue : NotFound » avec une trace complète :
+    # le message affiché à l'utilisateur ne voulait rien dire, et le journal criait à tort.
+    journal.info("refus %s sur %s %s", e.code, request.method, request.path)
+    return jsonify({"erreur": f"{e.description} ({e.code})"}), e.code
 
 
 @application.errorhandler(Exception)
@@ -105,7 +146,7 @@ def api_exporter_projet(nom):
         archive = exporter_projet(nom, complet=complet)
     except ValueError as e:
         raise Erreur(str(e))
-    return send_from_directory(archive.parent, archive.name, as_attachment=True)
+    return _fichier_pret(archive)
 
 
 @application.post("/api/projets/importer")
@@ -579,12 +620,11 @@ def api_export(format):
         chemin = export.classeur_recueil(projet)
     else:
         raise Erreur(f"Format d'export inconnu : {format}")
-    return send_from_directory(chemin.parent, chemin.name, as_attachment=True)
+    return _fichier_pret(chemin)
 
 
 @application.get("/api/recueil")
 def api_recueil():
     """Classeur de recueil des disponibilités, à envoyer aux AESH (un onglet par personne)."""
     projet = projet_courant()
-    chemin = export.classeur_recueil(projet)
-    return send_from_directory(chemin.parent, chemin.name, as_attachment=True)
+    return _fichier_pret(export.classeur_recueil(projet))

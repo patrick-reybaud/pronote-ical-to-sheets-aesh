@@ -142,34 +142,54 @@ async function api(url, options = {}) {
 async function majEtat() { E = await api("/api/etat"); dessinerNav(); }
 
 /*
+ * Rappel de ce qui vient d'être fabriqué, avec un lien de secours.
+ *
+ * Un navigateur peut refuser un téléchargement lancé par le code — Safari le fait quand sa liste de
+ * téléchargements est en vrac, et l'utilisateur n'a alors aucun moyen de savoir que le fichier
+ * existe pourtant, déjà écrit sur le disque. Ce rappel lui donne les deux issues : le lien, qu'il
+ * peut cliquer lui-même, et le dossier où le fichier l'attend de toute façon.
+ */
+function annoncerFichier(pret) {
+  const zone = $("#retour-export") || $("#depot-recueil-retour") || $("#retour-projet");
+  if (!zone) return;
+  const ko = Math.max(1, Math.round(pret.octets / 1024));
+  zone.innerHTML = message("info",
+    `<b>${ech(pret.fichier)}</b> (${ko} Ko) est prêt.<br>`
+    + `Si l'enregistrement n'a pas démarré, `
+    + `<a href="${pret.adresse}" download="${ech(pret.fichier)}">cliquez ici</a> — `
+    + `le fichier est de toute façon rangé dans le dossier du projet, sous « sorties ».`);
+}
+
+/*
  * Téléchargement d'un fichier produit par l'application.
  *
- * On ne passe plus par « location.href » : c'est une navigation, et deux téléchargements lancés
- * coup sur coup s'annulaient l'un l'autre — le navigateur affichait « Zéro Ko sur 145 Ko,
- * impossible de créer le fichier ». On récupère donc le contenu, puis on le remet au navigateur
- * par un lien de téléchargement, ce qui n'interrompt rien et permet d'afficher une vraie erreur.
+ * En deux temps, et c'est volontaire.
+ *
+ * Trois façons de faire ont échoué avant celle-ci : « location.href » (c'est une navigation, deux
+ * téléchargements lancés coup sur coup s'annulaient), le contenu passé en mémoire par un objet
+ * blob (Safari perdait l'objet avant d'avoir fini de l'écrire : « WebKitBlobResource error »), et
+ * surtout le fait de fabriquer le fichier dans la requête de téléchargement elle-même — le
+ * navigateur redemande l'adresse pour son propre compte et récupérait alors un fichier recalculé,
+ * différent du premier, donc inutilisable.
+ *
+ * On demande donc d'abord la fabrication, qui répond par l'adresse d'un fichier écrit sur le
+ * disque, puis on laisse le navigateur télécharger cette adresse comme n'importe quel lien. Elle
+ * est stable : il peut la redemander autant de fois qu'il veut.
  */
 async function telecharger(url, bouton) {
   const libelle = bouton ? bouton.textContent : "";
   if (bouton) { bouton.disabled = true; bouton.textContent = "Préparation…"; }
   try {
-    const reponse = await fetch(url);
-    if (!reponse.ok) {
-      let message = `Le serveur a répondu ${reponse.status}.`;
-      try { message = (await reponse.json()).erreur || message; } catch {}
-      throw new Error(message);
-    }
-    const entete = reponse.headers.get("Content-Disposition") || "";
-    const nom = (entete.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i) || [])[1]
-                || url.split("/").pop().split("?")[0];
-    const contenu = await reponse.blob();
+    const pret = await api(url);
     const lien = document.createElement("a");
-    lien.href = URL.createObjectURL(contenu);
-    lien.download = decodeURIComponent(nom);
+    lien.href = pret.adresse;
+    lien.download = pret.fichier;
     document.body.appendChild(lien);
     lien.click();
-    lien.remove();
-    setTimeout(() => URL.revokeObjectURL(lien.href), 30000);
+    // Safari abandonne le téléchargement si le lien disparaît du document trop tôt.
+    setTimeout(() => lien.remove(), 60000);
+    annoncerFichier(pret);
+    return pret;
   } finally {
     if (bouton) { bouton.disabled = false; bouton.textContent = libelle; }
   }
@@ -1405,6 +1425,7 @@ ECRANS.resultat = async () => {
         <button class="action" id="exp-eleves-xlsx">Emplois du temps des élèves (.xlsx)</button>
         <button class="action secondaire" id="exp-eleves">Élèves — version imprimable (.html)</button>
       </div>
+      <div id="retour-export"></div>
       ${r.recherche ? `<p class="aide" style="margin:10px 0 0">Recherche « ${ech(r.recherche.exigence)} » :
         ${r.recherche.duree} s, ${r.recherche.ameliorations} amélioration(s), arrêtée car
         <b>${ech(r.recherche.arret)}</b>.</p>` : ""}
