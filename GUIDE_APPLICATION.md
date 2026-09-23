@@ -162,7 +162,12 @@ Les **règles dures** ne sont jamais violées : disponibilité, présence de l'�
 quotités, accompagnement exclusif, mutualisation dans le même cours seulement, incompatibilités entre
 élèves, interdictions et affectations imposées.
 
-Deux plafonds se règlent ici. La **mutualisation** : au plus *N* élèves par AESH sur un même créneau.
+Trois réglages se font ici. La **pause méridienne** : chaque AESH doit disposer, **chaque jour
+travaillé**, d'au moins une heure libre d'affilée entre 11 h et 14 h. C'est une règle dure, la durée
+et la fenêtre sont modifiables, et `0 minute` la désactive. Sur un établissement réel elle coûte
+environ 2 points de couverture — le prix d'une pause qui existe vraiment.
+
+La **mutualisation** : au plus *N* élèves par AESH sur un même créneau.
 La **continuité** : au plus *N* AESH différents auprès d'un même élève — une règle dure, parce que
 « pas plus de trois personnes autour de cet enfant » est une exigence, pas une préférence à pondérer.
 Mesuré sur un établissement réel : plafond 2 → 87 % de couverture, plafond 3 → 92 %, sans plafond
@@ -190,6 +195,19 @@ final.
 Chaque élève a **sa couleur**, rappelée en légende ; un créneau partagé par deux élèves apparaît en
 bandes obliques. Les créneaux consécutifs identiques sont **fusionnés en un seul bloc**, comme dans
 ProNote, au lieu de répéter la même chose toutes les demi-heures.
+
+#### Changer l'AESH d'un cours
+
+En bas de l'écran, le bloc **Ajuster les affectations** liste tous les cours affectés et permet de
+confier l'un d'eux à un autre accompagnant. Ne sont proposés que les AESH **disponibles sur toute la
+durée du cours** et non interdits pour cet élève ; la mention « occupé » indique qu'il faudra
+déplacer ce qu'ils font à ce moment-là.
+
+Un cours confié à la main devient une **règle dure** : au recalcul, tout le reste se réorganise
+autour, ou le calcul annonce que c'est impossible. Filtrez par élève, ou n'affichez que les cours
+pour lesquels un AESH est libre — ceux qui se permutent sans rien déranger.
+
+#### Le bilan
 
 Couverture globale, taux de l'élève le moins bien servi, bilan par élève et par AESH, et surtout
 **les heures non couvertes avec leur cause** : aucun AESH disponible sur le créneau, quotités

@@ -72,6 +72,8 @@ class Projet:
             "fichier_pial": None, "sources_ics": [], "etablissement": None,
             "semaines_types": [], "plage": list(PLAGE_DEFAUT), "max_mutualise": 2,
             "max_aesh_par_eleve": 3,
+            "pause": {"debut": 11, "fin": 14, "minutes": 60},
+            "cours_imposes": {},
             "poids": dict(POIDS_DEFAUT), "efforts": {}, "affinites": {}, "paires": {},
             "corrections_matieres": {}, "aesh_desactives": [], "dispos": {}, "resultat": None,
             "heures_eleves": {},      # corrections manuelles des heures notifiées
@@ -419,6 +421,66 @@ class Projet:
                 "hors_proposition": total - cumul,
                 "par_heure": {str(h): compte[h] for h in heures}}
 
+    def alternatives_affectation(self, population=None):
+        """
+        Pour chaque cours affecté, les AESH qui pourraient le prendre à la place.
+
+        Un AESH est proposé s'il est disponible sur **toute** la durée du cours et n'est pas interdit
+        pour cet élève. On indique s'il est libre à ce moment-là ou déjà occupé : dans le second cas
+        l'échange reste possible, mais le calcul devra déplacer son cours actuel, et il dira s'il n'y
+        arrive pas. On ne tranche pas ici — seul le solveur sait si l'ensemble reste cohérent.
+        """
+        resultat = self.etat.get("resultat") or {}
+        if not resultat.get("affectations"):
+            return []
+        population = population or self.population()
+        desactives = set(self.etat.get("aesh_desactives", []))
+        aesh = [a for a in population["aesh"] if a["id"] not in desactives]
+        dispos = {a["id"]: self.disponibilites(a["id"]) for a in aesh}
+        noms = {a["id"]: a["nom_complet"] for a in aesh}
+        paires = self.etat.get("paires") or {}
+        imposes = self.etat.get("cours_imposes") or {}
+
+        cours, occupation = {}, defaultdict(dict)
+        for a in resultat["affectations"]:
+            cle = (a["eleve"], a["parite"], a["id_cours"])
+            entree = cours.setdefault(cle, {"eleve": a["eleve"], "eleve_nom": a["eleve_nom"],
+                                            "parite": a["parite"], "jour": a["jour"],
+                                            "matiere": a["matiere"], "salle": a.get("salle", ""),
+                                            "aesh": a["aesh"], "aesh_nom": a["aesh_nom"],
+                                            "creneaux": []})
+            entree["creneaux"].append(a["creneau"])
+            occupation[a["aesh"]][(a["parite"], a["jour"], a["creneau"])] = a["eleve_nom"]
+
+        sortie = []
+        for cle, info in sorted(cours.items(), key=lambda kv: (kv[1]["eleve_nom"], kv[1]["jour"],
+                                                               min(kv[1]["creneaux"]))):
+            creneaux = sorted(info["creneaux"])
+            requis = [(info["jour"], c) for c in creneaux]
+            propositions = []
+            for personne in aesh:
+                if personne["id"] == info["aesh"]:
+                    continue
+                if (paires.get(f"{personne['id']}|{info['eleve']}") or 0) <= -2:
+                    continue
+                if not all(r in dispos[personne["id"]] for r in requis):
+                    continue
+                pris = {occupation[personne["id"]].get((info["parite"], info["jour"], c))
+                        for c in creneaux}
+                pris.discard(None)
+                propositions.append({"id": personne["id"], "nom": personne["nom_complet"],
+                                     "libre": not pris, "occupe_par": sorted(pris)})
+            propositions.sort(key=lambda p: (not p["libre"], p["nom"]))
+            sortie.append({
+                "cle": f"{cle[0]}|{cle[1]}|{cle[2]}",
+                **{k: v for k, v in info.items() if k != "creneaux"},
+                "creneaux": creneaux,
+                "duree": round(len(creneaux) / 2, 1),
+                "impose": imposes.get(f"{cle[0]}|{cle[1]}|{cle[2]}"),
+                "alternatives": propositions,
+            })
+        return sortie
+
     # ───────────────────────────── Calcul ─────────────────────────────
 
     def calculer(self, secondes=30, journal=None):
@@ -455,7 +517,9 @@ class Projet:
             poids=self.etat.get("poids"), max_mutualise=self.etat.get("max_mutualise", 2),
             precedent=precedent, mutualisation=self.etat.get("mutualisation"),
             paires_eleves=self.etat.get("paires_eleves"),
-            max_aesh_par_eleve=self.etat.get("max_aesh_par_eleve", 3)), secondes=secondes, journal=journal)
+            max_aesh_par_eleve=self.etat.get("max_aesh_par_eleve", 3),
+            pause=self.etat.get("pause"), cours_imposes=self.etat.get("cours_imposes"),
+            h_min=(self.etat.get("plage") or PLAGE_DEFAUT)[0]), secondes=secondes, journal=journal)
         resultat["calcule_le"] = maintenant()
         self.etat["resultat"] = resultat
         self.enregistrer()

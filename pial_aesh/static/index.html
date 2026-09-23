@@ -815,6 +815,16 @@ ECRANS.ponderations = async () => {
         <label>élèves par AESH sur un même créneau, et seulement s'ils sont dans le même cours.</label>
       </div>
       <div class="ligne">
+        <label><b>Pause méridienne</b> — au moins</label>
+        <input type="number" id="pause-min" value="${(E.etat.pause||{}).minutes ?? 60}" min="0" max="180"
+               step="30" style="width:70px">
+        <label>minutes libres d'affilée entre</label>
+        <input type="number" id="pause-debut" value="${(E.etat.pause||{}).debut ?? 11}" min="0" max="23" style="width:56px">
+        <label>h et</label>
+        <input type="number" id="pause-fin" value="${(E.etat.pause||{}).fin ?? 14}" min="1" max="24" style="width:56px">
+        <label>h, chaque jour travaillé (0 minute = pas d'exigence).</label>
+      </div>
+      <div class="ligne">
         <label><b>Continuité</b> — au plus</label>
         <input type="number" id="max-aesh" value="${E.etat.max_aesh_par_eleve ?? 3}" min="0" max="12" style="width:60px">
         <label>AESH différents auprès d'un même élève (0 = sans plafond). Trop bas, des heures
@@ -851,7 +861,9 @@ ECRANS.ponderations = async () => {
     const p = {};
     document.querySelectorAll(".poids").forEach(c => p[c.dataset.c] = +c.value);
     await enregistrer({poids: p, max_mutualise: +$("#max-mut").value,
-                       max_aesh_par_eleve: +$("#max-aesh").value});
+                       max_aesh_par_eleve: +$("#max-aesh").value,
+                       pause: {minutes: +$("#pause-min").value, debut: +$("#pause-debut").value,
+                               fin: +$("#pause-fin").value}});
   };
   document.querySelectorAll(".poids").forEach(c => {
     c.oninput = () => $("#v-"+c.dataset.c).textContent = c.value;
@@ -859,6 +871,7 @@ ECRANS.ponderations = async () => {
   });
   $("#max-mut").onchange = sauverPoids;
   $("#max-aesh").onchange = sauverPoids;
+  ["pause-min","pause-debut","pause-fin"].forEach(i => $("#"+i).onchange = sauverPoids);
   $("#reset-poids").onclick = async () => { await enregistrer({poids: E.poids_defaut}); dessiner(); };
   document.querySelectorAll(".croise select").forEach(s => s.onchange = async () => {
     const v = +s.value;
@@ -956,7 +969,82 @@ ECRANS.resultat = async () => {
       </table></div></div>` : ""}`;
   $("#exp-xlsx").onclick = () => location.href = "/api/export/xlsx";
   $("#exp-html").onclick = () => location.href = "/api/export/html";
+  await ajustementAffectations();
 };
+
+async function ajustementAffectations() {
+  const d = await api("/api/alternatives");
+  const plage = E.etat.plage || [7, 18];
+  const jours = E.jours.slice(0, 5);
+  const heure = c => { const m = plage[0]*60 + c*E.pas_minutes;
+    return `${Math.floor(m/60)}h${String(m%60).padStart(2,"0")}`; };
+  const eleves = [...new Set(d.cours.map(c => c.eleve_nom))].sort();
+  const nbImposes = Object.keys(d.imposes || {}).length;
+
+  const zone = document.createElement("div");
+  zone.className = "carte";
+  zone.innerHTML = `
+    <b>Ajuster les affectations</b>
+    <p class="aide" style="margin:6px 0 12px">Confiez un cours à un autre AESH. Ne sont proposés que
+      ceux qui sont <b>disponibles sur toute la durée du cours</b> et non interdits pour cet élève ;
+      « occupé » signifie qu'il faudra déplacer ce qu'ils font à ce moment-là — le calcul s'en charge,
+      ou vous dira qu'il n'y arrive pas. Un cours confié à la main devient une <b>règle dure</b> :
+      le reste s'organise autour.</p>
+    <div class="ligne">
+      <label>Élève</label>
+      <select id="filtre-eleve" style="min-width:240px">
+        <option value="">tous (${d.cours.length} cours)</option>
+        ${eleves.map(n => `<option value="${ech(n)}">${ech(n)}</option>`).join("")}
+      </select>
+      <label><input type="checkbox" id="filtre-libre"> seulement les cours ayant un AESH libre</label>
+      <span id="compteur-imposes" style="margin-left:auto;color:#5b6570">
+        ${nbImposes ? `<b>${nbImposes} cours confié(s) à la main</b>` : "aucun cours confié à la main"}</span>
+    </div>
+    <div id="retour-imposer"></div>
+    <div id="table-ajust"></div>`;
+  $("#ecran").appendChild(zone);
+
+  const dessinerTable = () => {
+    const eleve = $("#filtre-eleve").value, seulementLibres = $("#filtre-libre").checked;
+    const lignes = d.cours.filter(c => (!eleve || c.eleve_nom === eleve)
+      && (!seulementLibres || c.alternatives.some(a => a.libre)));
+    $("#table-ajust").innerHTML = lignes.length ? `<div class="defile"><table>
+      <tr><th>Élève</th><th>Quand</th><th>Matière</th><th class="num">Durée</th>
+          <th>AESH actuel</th><th style="width:270px">Confier à</th></tr>
+      ${lignes.map(c => `<tr>
+        <td>${ech(c.eleve_nom)}</td>
+        <td style="white-space:nowrap">${jours[c.jour]} ${heure(Math.min(...c.creneaux))}
+            <span class="ab" style="color:#5b6570">sem. ${c.parite}</span></td>
+        <td style="font-size:12px">${ech(c.matiere)}</td>
+        <td class="num">${c.duree} h</td>
+        <td>${c.impose ? "🔒 " : ""}${ech(c.aesh_nom)}</td>
+        <td><select class="imposer" data-c="${ech(c.cle)}" style="width:100%">
+          <option value="">— laisser le calcul décider —</option>
+          <option value="${ech(c.aesh)}" ${c.impose === c.aesh ? "selected" : ""}>
+            ${ech(c.aesh_nom)} (actuel)</option>
+          ${c.alternatives.map(a => `<option value="${ech(a.id)}" ${c.impose === a.id ? "selected" : ""}>
+            ${ech(a.nom)}${a.libre ? " — libre" : " — occupé par " + ech(a.occupe_par.join(", "))}</option>`).join("")}
+        </select></td></tr>`).join("")}
+    </table></div>` : message("info", "Aucun cours ne correspond à ce filtre.");
+    document.querySelectorAll("select.imposer").forEach(sel => sel.onchange = async () => {
+      try {
+        const r = await api("/api/imposer", {method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({cours: sel.dataset.c, aesh: sel.value || null})});
+        await majEtat();
+        const n = Object.keys(r.cours_imposes).length;
+        $("#compteur-imposes").innerHTML = n ? `<b>${n} cours confié(s) à la main</b>`
+                                             : "aucun cours confié à la main";
+        $("#retour-imposer").innerHTML = message("info",
+          `Modification enregistrée. <b>Relancez le calcul</b> pour que l'ensemble se réorganise :
+           <button class="action" id="relancer" style="margin-left:8px">Relancer le calcul</button>`);
+        $("#relancer").onclick = () => { etape = "calcul"; dessinerNav(); dessiner(); };
+      } catch (e) { $("#retour-imposer").innerHTML = erreurAffichee(e); }
+    });
+  };
+  $("#filtre-eleve").onchange = dessinerTable;
+  $("#filtre-libre").onchange = dessinerTable;
+  dessinerTable();
+}
 
 async function dessiner() {
   $("#ecran").innerHTML = `<p class="aide">Chargement…</p>`;

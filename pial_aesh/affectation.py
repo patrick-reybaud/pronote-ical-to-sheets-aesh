@@ -55,6 +55,8 @@ REGLES_DURES = [
     ("H8", "Les interdictions saisies (élève ✕ AESH) sont respectées"),
     ("H9", "Les affectations forcées saisies sont respectées"),
     ("H10", "Un élève n'est pas accompagné par plus d'AESH différents que le plafond fixé"),
+    ("H11", "Chaque AESH garde une pause continue d'au moins une heure entre 11 h et 14 h"),
+    ("H12", "Les cours confiés à la main depuis l'écran des résultats sont respectés"),
 ]
 
 REGLES_SOUPLES = [
@@ -81,7 +83,8 @@ class Probleme:
 
     def __init__(self, eleves, aesh, efforts, affinites, paires, famille_de,
                  poids=None, max_mutualise=2, precedent=None,
-                 mutualisation=None, paires_eleves=None, max_aesh_par_eleve=0):
+                 mutualisation=None, paires_eleves=None, max_aesh_par_eleve=0,
+                 pause=None, cours_imposes=None, h_min=7):
         self.eleves = eleves
         self.aesh = aesh
         self.efforts = efforts or {}
@@ -95,6 +98,11 @@ class Probleme:
         self.paires_eleves = paires_eleves or {}
         # 0 = pas de plafond. Un poids de continuité ne garantit rien ; un plafond, si.
         self.max_aesh_par_eleve = max(0, int(max_aesh_par_eleve or 0))
+        # Pause méridienne : {"debut": 11, "fin": 14, "minutes": 60}. minutes = 0 → pas d'exigence.
+        self.pause = {"debut": 11, "fin": 14, "minutes": 60, **(pause or {})}
+        # Affectations imposées au cours près : {"<élève>|<parité>|<id_cours>": "<id AESH>"}
+        self.cours_imposes = cours_imposes or {}
+        self.h_min = h_min
 
     def exclusif(self, eleve):
         """
@@ -252,6 +260,32 @@ def resoudre(probleme, secondes=20, journal=None):
                     modele.AddBoolOr([debut, courant.Not(), precedent])
                 debuts_de_bloc.append(debut)
 
+    # ── H11 : pause méridienne. Chaque AESH doit disposer, chaque jour travaillé, d'une plage
+    # libre continue d'au moins une heure entre 11 h et 14 h. Un AESH qui ne travaille pas ce
+    # jour-là satisfait la règle sans rien faire : toutes ses demi-heures sont libres.
+    duree = probleme.pause.get("minutes") or 0
+    if duree:
+        largeur = duree // DUREE_CRENEAU_MIN
+        premier = (probleme.pause["debut"] - probleme.h_min) * 60 // DUREE_CRENEAU_MIN
+        dernier = (probleme.pause["fin"] - probleme.h_min) * 60 // DUREE_CRENEAU_MIN
+        for aesh in probleme.aesh:
+            journees = {(cle[0], cle[1]) for (id_a, cle) in occupe if id_a == aesh["id"]}
+            for parite, jour in journees:
+                creneaux_possibles = []
+                for depart in range(premier, dernier - largeur + 1):
+                    occupes = [occupe[(aesh["id"], (parite, jour, depart + k))]
+                               for k in range(largeur)
+                               if (aesh["id"], (parite, jour, depart + k)) in occupe]
+                    if not occupes:
+                        creneaux_possibles = None      # créneau déjà libre en toutes circonstances
+                        break
+                    libre = modele.NewBoolVar(f"pause_{aesh['id']}_{parite}{jour}_{depart}")
+                    modele.AddBoolAnd([o.Not() for o in occupes]).OnlyEnforceIf(libre)
+                    modele.AddBoolOr(occupes).OnlyEnforceIf(libre.Not())
+                    creneaux_possibles.append(libre)
+                if creneaux_possibles:
+                    modele.AddBoolOr(creneaux_possibles)
+
     # ── H6 : quotité de service (demi-heures occupées sur deux semaines, mutualisation comprise)
     for aesh in probleme.aesh:
         creneaux_occupes = [v for (id_a, _), v in occupe.items() if id_a == aesh["id"]]
@@ -280,6 +314,17 @@ def resoudre(probleme, secondes=20, journal=None):
             couverture[eleve["id"]] = total
         else:
             hors_equite.append((eleve["id"], "aucune heure notifiée chiffrée"))
+
+    # ── H9b : cours confiés à la main depuis l'écran des résultats. Ce n'est pas une suggestion :
+    # le calcul doit s'y plier et réarranger le reste, ou déclarer que c'est impossible.
+    for cle_cours, id_aesh in probleme.cours_imposes.items():
+        try:
+            id_eleve, parite, id_cours = cle_cours.split("|", 2)
+        except ValueError:
+            continue
+        variable = x.get((id_aesh, (id_eleve, parite, id_cours)))
+        if variable is not None:
+            modele.Add(variable == 1)
 
     # ── H9 : affectations imposées
     for cle_paire, valeur in probleme.paires.items():

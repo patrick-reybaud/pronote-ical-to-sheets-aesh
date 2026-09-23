@@ -202,7 +202,7 @@ def api_parametres():
     for cle in ("etablissement", "semaines_types", "max_mutualise", "heures_eleves",
                 "poids", "efforts", "affinites", "paires", "corrections_matieres",
                 "aesh_desactives", "mutualisation", "paires_eleves", "matieres_exclues",
-                "max_aesh_par_eleve", "appariements_forces"):
+                "max_aesh_par_eleve", "appariements_forces", "pause", "cours_imposes"):
         if cle in corps:
             projet.etat[cle] = corps[cle]
             if cle in ("etablissement", "semaines_types", "heures_eleves",
@@ -347,6 +347,32 @@ def api_calculer():
 @application.get("/api/resultat")
 def api_resultat():
     return jsonify(projet_courant().etat.get("resultat") or {"statut": "JAMAIS_CALCULE"})
+
+
+@application.get("/api/alternatives")
+def api_alternatives():
+    """Cours affectés et AESH qui pourraient les reprendre — écran des résultats."""
+    projet = projet_courant()
+    return jsonify({"cours": projet.alternatives_affectation(),
+                    "imposes": projet.etat.get("cours_imposes") or {}})
+
+
+@application.post("/api/imposer")
+def api_imposer():
+    """Confie un cours à un AESH donné (ou retire l'imposition), puis laisse relancer le calcul."""
+    projet = projet_courant()
+    corps = request.json or {}
+    cle, id_aesh = corps.get("cours"), corps.get("aesh")
+    if not cle:
+        raise Erreur("Cours non précisé.")
+    imposes = dict(projet.etat.get("cours_imposes") or {})
+    if id_aesh:
+        imposes[cle] = id_aesh
+    else:
+        imposes.pop(cle, None)
+    projet.etat["cours_imposes"] = imposes
+    projet.enregistrer()
+    return jsonify({"cours_imposes": imposes})
 
 
 @application.get("/api/export/<format>")
