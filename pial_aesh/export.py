@@ -562,6 +562,120 @@ def emplois_du_temps_xlsx(projet, resultat):
 
 # ───────────────────────────── Emplois du temps des élèves ─────────────────────────────
 
+def _grilles_eleves(projet, resultat):
+    """
+    Grille d'affichage de chaque élève : son emploi du temps, chaque créneau portant l'AESH qui
+    l'accompagne — ou personne. Les cours non accompagnés reçoivent un identifiant distinct pour
+    ne pas être fusionnés avec un cours voisin qui, lui, est couvert.
+    """
+    population = projet.population()
+    grilles, _, _ = projet.grilles(population)
+    accompagnement = {}
+    for a in resultat["affectations"]:
+        accompagnement.setdefault(a["eleve"], {})[(a["parite"], a["jour"], a["creneau"])] = a
+    affichage = {}
+    for id_eleve, creneaux in grilles.items():
+        grille = {}
+        for cle, cours in creneaux.items():
+            a = accompagnement.get(id_eleve, {}).get(cle)
+            grille.setdefault(cle, []).append({
+                "eleve_nom": a["aesh_nom"] if a else "", "eleve": a["aesh"] if a else "",
+                "matiere": cours["matiere"], "salle": cours.get("salle", ""),
+                "id_cours": cours["id_cours"] + ("" if a else "~libre")})
+        affichage[id_eleve] = grille
+    return population, affichage
+
+
+def emplois_du_temps_eleves_xlsx(projet, resultat):
+    """Emplois du temps des élèves en classeur : une feuille par élève, colorée par accompagnant."""
+    h_min, h_max = projet.etat.get("plage") or (7, 18)
+    nb_creneaux = (h_max - h_min) * 60 // PAS_MINUTES
+    population, affichage = _grilles_eleves(projet, resultat)
+    couleurs = couleurs_aesh(resultat)
+    bilans = {b["id"]: b for b in resultat["eleves"]}
+    _SANS = PatternFill("solid", fgColor="F2F3F4")
+
+    classeur = Workbook()
+    synthese = classeur.active
+    synthese.title = "Synthèse"
+    synthese.append(["Élève", "Classe", "Aide", "Heures notifiées", "Heures accompagnées",
+                     "Taux", "Nb AESH", "Accompagnants"])
+    for cellule in synthese[1]:
+        cellule.font, cellule.fill = Font(bold=True), _ENTETE
+    for eleve in sorted(population["eleves"], key=lambda e: e["nom_complet"]):
+        bilan = bilans.get(eleve["id"], {})
+        synthese.append([eleve["nom_complet"], eleve.get("classe") or eleve.get("niveau") or "",
+                         eleve.get("type_aide") or "", eleve.get("heures", 0),
+                         bilan.get("heures_couvertes", 0),
+                         "" if bilan.get("taux") is None else bilan["taux"] / 100,
+                         bilan.get("nb_aesh", 0), ", ".join(bilan.get("aesh") or [])])
+    for ligne in synthese.iter_rows(min_row=2, min_col=6, max_col=6):
+        ligne[0].number_format = "0 %"
+    for colonne, largeur in zip("ABCDEFGH", (28, 12, 6, 16, 18, 8, 8, 46)):
+        synthese.column_dimensions[colonne].width = largeur
+    synthese.freeze_panes = "A2"
+
+    for eleve in sorted(population["eleves"], key=lambda e: e["nom_complet"]):
+        grille = affichage.get(eleve["id"])
+        if not grille:
+            continue
+        bilan = bilans.get(eleve["id"], {})
+        feuille = classeur.create_sheet(_titre_onglet(eleve["nom_complet"], classeur.sheetnames))
+        feuille.cell(row=1, column=1, value=eleve["nom_complet"]).font = Font(bold=True, size=13)
+        taux = bilan.get("taux")
+        feuille.cell(row=2, column=1, value=
+                     f"aide {eleve.get('type_aide') or '—'} · {eleve.get('heures', 0):g} h notifiées · "
+                     f"{bilan.get('heures_couvertes', 0)} h accompagnées"
+                     + (f" ({taux} %)" if taux is not None else "")
+                     + (f" · {', '.join(bilan.get('aesh') or [])}" if bilan.get("aesh")
+                        else " · aucun accompagnement")).font = Font(italic=True, size=9)
+        feuille.cell(row=4, column=1, value="Horaires").font = Font(bold=True)
+        feuille.column_dimensions["A"].width = 14
+        for jour, nom_jour in enumerate(JOURS_SEMAINE):
+            for k, parite in enumerate(("A", "B")):
+                colonne = 2 + jour * 2 + k
+                feuille.column_dimensions[get_column_letter(colonne)].width = 20
+                cellule = feuille.cell(row=4, column=colonne, value=f"{nom_jour}\nsem. {parite}")
+                cellule.font, cellule.fill = Font(bold=True, size=9), _ENTETE
+                cellule.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for s in range(nb_creneaux):
+            cellule = feuille.cell(row=5 + s, column=1, value=_libelle_creneau(h_min, s))
+            cellule.font, cellule.fill, cellule.border = Font(size=9), _GRIS, _BORDURE
+            for jour in range(len(JOURS_SEMAINE)):
+                for k in (0, 1):
+                    feuille.cell(row=5 + s, column=2 + jour * 2 + k).border = _BORDURE
+        for jour in range(len(JOURS_SEMAINE)):
+            for premier, hauteur, largeur, colonne, texte, noms in blocs_jour(grille, jour, nb_creneaux):
+                depart = 2 + jour * 2 + colonne
+                case = feuille.cell(row=5 + premier, column=depart,
+                                    value="\n".join(l for l in texte.split("\n") if l.strip()))
+                case.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+                case.font, case.border = Font(size=8), _BORDURE
+                accompagnants = [n for n in noms if n]
+                case.fill = (PatternFill("solid", fgColor=couleurs.get(accompagnants[0], "D9E8FA"))
+                             if accompagnants else _SANS)
+                if hauteur > 1 or largeur > 1:
+                    feuille.merge_cells(start_row=5 + premier, start_column=depart,
+                                        end_row=5 + premier + hauteur - 1,
+                                        end_column=depart + largeur - 1)
+        feuille.freeze_panes = "B5"
+        feuille.sheet_view.showGridLines = False
+
+    legende = classeur.create_sheet("Légende")
+    legende.column_dimensions["A"].width = 34
+    legende.cell(row=1, column=1, value="Couleur par accompagnant").font = Font(bold=True, size=12)
+    for i, (nom, teinte) in enumerate(couleurs.items(), start=3):
+        cellule = legende.cell(row=i, column=1, value=nom)
+        cellule.fill, cellule.border = PatternFill("solid", fgColor=teinte), _BORDURE
+    ligne = 3 + len(couleurs) + 1
+    cellule = legende.cell(row=ligne, column=1, value="cours sans accompagnement")
+    cellule.fill, cellule.border = _SANS, _BORDURE
+
+    chemin = _dossier_sortie(projet) / f"EDT_eleves_{_horodatage()}.xlsx"
+    classeur.save(chemin)
+    return chemin
+
+
 def emplois_du_temps_eleves(projet, resultat):
     """
     Emploi du temps de chaque élève, coloré selon l'AESH qui l'accompagne.

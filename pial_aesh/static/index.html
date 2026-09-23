@@ -1360,7 +1360,8 @@ ECRANS.resultat = async () => {
       <div class="ligne" style="margin-top:16px">
         <button class="action" id="exp-xlsx">Emplois du temps des AESH (.xlsx)</button>
         <button class="action secondaire" id="exp-html">AESH — version imprimable (.html)</button>
-        <button class="action secondaire" id="exp-eleves">Emplois du temps des élèves (.html)</button>
+        <button class="action" id="exp-eleves-xlsx">Emplois du temps des élèves (.xlsx)</button>
+        <button class="action secondaire" id="exp-eleves">Élèves — version imprimable (.html)</button>
       </div>
       ${r.recherche ? `<p class="aide" style="margin:10px 0 0">Recherche « ${ech(r.recherche.exigence)} » :
         ${r.recherche.duree} s, ${r.recherche.ameliorations} amélioration(s), arrêtée car
@@ -1401,6 +1402,7 @@ ECRANS.resultat = async () => {
   $("#exp-xlsx").onclick = () => location.href = "/api/export/xlsx";
   $("#exp-html").onclick = () => location.href = "/api/export/html";
   $("#exp-eleves").onclick = () => location.href = "/api/export/eleves";
+  $("#exp-eleves-xlsx").onclick = () => location.href = "/api/export/eleves-xlsx";
   await ajustementAffectations();
 };
 

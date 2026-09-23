@@ -573,6 +573,8 @@ def api_export(format):
         chemin = export.emplois_du_temps_xlsx(projet, resultat)
     elif format == "eleves":
         chemin = export.emplois_du_temps_eleves(projet, resultat)
+    elif format == "eleves-xlsx":
+        chemin = export.emplois_du_temps_eleves_xlsx(projet, resultat)
     elif format == "recueil":
         chemin = export.classeur_recueil(projet)
     else:

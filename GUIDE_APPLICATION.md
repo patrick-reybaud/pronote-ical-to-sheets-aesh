@@ -286,9 +286,16 @@ pour lesquels un AESH est libre — ceux qui se permutent sans rien déranger.
 
 #### Le bilan
 
-Trois exports : les **emplois du temps des AESH** en `.xlsx` et en `.html` imprimable, colorés par
-élève ; et les **emplois du temps des élèves** en `.html`, colorés cette fois **par accompagnant**,
-les cours sans accompagnement restant en gris. Chacun porte sa légende.
+Quatre exports, en `.xlsx` et en `.html` imprimable :
+
+| | Une feuille par | Couleur | Gris |
+|---|---|---|---|
+| **Emplois du temps des AESH** | accompagnant | par élève suivi | — |
+| **Emplois du temps des élèves** | élève | par accompagnant | cours sans accompagnement |
+
+Chaque classeur porte une feuille **Synthèse** et une feuille **Légende**. Dans les deux cas, les
+créneaux consécutifs identiques sont fusionnés et les semaines A et B réunies quand le cours a lieu
+toutes les semaines.
 
 Couverture globale, taux de l'élève le moins bien servi, bilan par élève et par AESH, et surtout
 **les heures non couvertes avec leur cause** : aucun AESH disponible sur le créneau, quotités
