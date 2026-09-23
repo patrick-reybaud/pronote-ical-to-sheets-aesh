@@ -37,7 +37,8 @@ button.secondaire{background:#fff;color:var(--bleu);border:1px solid var(--bleu)
 button.secondaire:hover{background:var(--bleu-clair)}
 table{border-collapse:collapse;width:100%;background:#fff;font-size:13px}
 th,td{border:1px solid var(--bord);padding:5px 8px;text-align:left}
-th{background:#eef1f4;font-weight:600;position:sticky;top:0;z-index:2}
+th{background:#eef1f4;font-weight:600;position:sticky;top:0;z-index:2;
+   box-shadow:inset 0 -1px 0 var(--bord)}
 tr:hover td{background:#fafbfc}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .pastille{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11.5px;font-weight:600}
@@ -70,7 +71,12 @@ details summary::marker{color:var(--bleu)}
         background:var(--jaune);font-size:13px}
 .detail{font-size:12.5px;color:#4a5258;margin-top:10px;line-height:1.6}
 .detail code{background:var(--gris);padding:1px 5px;border-radius:3px}
-.defile{max-height:calc(100vh - 260px);overflow:auto;border:1px solid var(--bord);border-radius:5px}
+/* Pas d'ascenseur à l'intérieur des cartes : un tableau s'affiche en entier et c'est la page qui
+   défile. Seuls les tableaux trop larges pour l'écran (efforts par matière, tableau croisé) gardent
+   un défilement horizontal, faute de quoi ils déborderaient. Les en-têtes restent collés en haut. */
+.defile{border:1px solid var(--bord);border-radius:5px;overflow:visible}
+.defile.large{overflow-x:auto}
+.defile table{border-radius:5px}
 .grille-dispo td{padding:0;text-align:center;width:52px;height:19px;cursor:pointer;user-select:none}
 .grille-dispo td.libre{background:#fff}
 .grille-dispo td.pris{background:#cce8cc}
@@ -491,7 +497,7 @@ ECRANS.semaines = async () => {
         <p class="aide" style="margin:8px 0 10px">Le rapprochement se fait sur la <b>date de naissance</b>,
           le nom servant à départager et à tolérer les différences d'orthographe. Une correspondance
           inférieure à 100 % mérite un coup d'œil.</p>
-        <div class="defile" style="max-height:340px"><table>
+        <div class="defile"><table>
           <tr><th>Élève</th><th>Né(e) le</th><th class="num">Correspondance</th>
               <th>Fichier ProNote</th><th>Comment</th><th></th></tr>
           ${appar.slice().sort((a,b) => a.trouve - b.trouve || a.score - b.score).map(a => `<tr>
@@ -530,7 +536,7 @@ ECRANS.semaines = async () => {
       <b>Semaines présentes dans les exports</b>
       <p class="aide" style="margin:6px 0 10px">Sélectionnez-en deux. Les semaines pleines sont les plus
         représentatives ; évitez les semaines de rentrée, de vacances ou d'examens.</p>
-      <div class="defile" style="max-height:340px"><table>
+      <div class="defile"><table>
         <tr><th></th><th>Semaine</th><th class="num">Séances</th><th class="num">Élèves</th></tr>
         ${POP.semaines.map(s => `<tr><td style="width:34px">
           <input type="checkbox" class="sem" value="${s.semaine}" ${sel.includes(s.semaine)?"checked":""}></td>
@@ -581,7 +587,7 @@ ECRANS.semaines = async () => {
 
 function tableauNotes(lignes, familles, valeurs, defauts, colonneInfos) {
   defauts = defauts || {};
-  return `<div class="defile"><table><tr><th style="min-width:210px">Nom</th>${colonneInfos.map(c=>`<th class="num">${c}</th>`).join("")}
+  return `<div class="defile large"><table><tr><th style="min-width:210px">Nom</th>${colonneInfos.map(c=>`<th class="num">${c}</th>`).join("")}
     ${familles.map(f => `<th class="num" title="${ech(f)}${defauts[f]?` — ${defauts[f]} par défaut`:""}" style="writing-mode:vertical-rl;transform:rotate(180deg);height:150px;padding:4px">${ech(f)}</th>`).join("")}</tr>
     ${lignes.map(l => `<tr>${l.cellules ? l.cellules : `<td>${ech(l.nom)}</td>`}${l.infos.map(v=>`<td class="num">${v}</td>`).join("")}
       ${familles.map(f => {
@@ -722,7 +728,7 @@ function brancherAssociation(apresChoix) {
           d'identité, elle peut venir d'une saisie fautive dans l'un des deux fichiers.</p>
         <input type="text" id="recherche-ics" placeholder="Filtrer par nom…" value="${ech(recherche||"")}"
                style="width:100%;margin-bottom:10px">
-        <div class="defile" style="max-height:330px"><table>
+        <div class="defile"><table>
           <tr><th>Élève dans ProNote</th><th>Né(e) le</th><th class="num">Ressemblance</th><th></th></tr>
           ${d.candidats.map(c => `<tr>
             <td>${ech(c.libelle)}</td>
@@ -895,7 +901,7 @@ ECRANS.aesh = async () => {
         par la même personne. <b>Imposer</b> garantit au moins un créneau ensemble, <b>privilégier</b>
         pèse sans contraindre, <b>interdire</b> exclut le binôme. Ces réglages sont les mêmes que ceux
         du tableau croisé de l'écran « Pondérations ».</p>
-      <div class="defile" style="max-height:300px"><table>
+      <div class="defile"><table>
         <tr><th>Élève</th><th>Aide</th><th class="num">Notifié</th><th style="width:190px">Décision</th></tr>
         <tbody id="corps-paires"></tbody>
       </table></div>
@@ -993,7 +999,7 @@ ECRANS.mutualisation = async () => {
         et l'aide <b>mutualisée</b> ne l'est pas. Vous pouvez trancher autrement : un élève en aide
         mutualisée qui ne supporte pas le partage, ou un élève en aide individuelle qui peut très bien
         être accompagné avec un camarade du même cours.</p>
-      <div class="defile" style="max-height:380px"><table>
+      <div class="defile"><table>
         <tr><th>Élève</th><th>Aide</th><th class="num">Notifié</th><th style="width:230px">Règle</th><th>Effet</th></tr>
         ${m.eleves.map(e => { const [classe, texte] = effet(e); return `<tr>
           <td>${ech(e.nom)}${e.a_edt?"":" <span class='pastille ko'>sans EDT</span>"}</td>
@@ -1161,7 +1167,7 @@ ECRANS.periodes = async () => {
           les journées d'intégration et les sorties pédagogiques sont <b>lues</b> dans l'export ;
           les absences longues en sont seulement <b>l'indice</b>, le plus souvent un stage.
           Rien n'est appliqué tant que vous n'avez pas ajouté la période.</p>
-        <div class="defile" style="max-height:340px"><table>
+        <div class="defile"><table>
           <tr><th>Proposition</th><th>Type</th><th>Dates</th><th>Élèves</th><th>D'après</th><th></th></tr>
           ${r.propositions.map((p, i) => `<tr>
             <td>${ech(p.nom)}</td>
@@ -1236,18 +1242,18 @@ ECRANS.ponderations = async () => {
           <span style="flex:1;min-width:300px;color:#4a5258">${ech(texte)}</span></div>`).join("")}
       <button class="action secondaire" id="reset-poids" style="margin-top:8px">Rétablir les valeurs par défaut</button>
     </div>
-    <div class="carte" style="overflow:auto">
+    <div class="carte">
       <b>Tableau croisé élèves ✕ AESH</b>
       <p class="aide" style="margin:6px 0 12px">« interdire » exclut totalement le binôme ; « imposer » garantit
         au moins un créneau ensemble ; « favoriser » et « éviter » pèsent sans contraindre.</p>
-      <table class="croise"><tr><th class="nom">Élève</th>
+      <div class="defile large"><table class="croise"><tr><th class="nom">Élève</th>
         ${POP.aesh.map(a=>`<th title="${ech(a.nom_complet)}" style="writing-mode:vertical-rl;transform:rotate(180deg);height:140px">${ech(a.nom_complet)}</th>`).join("")}</tr>
         ${POP.eleves.map(e => `<tr><th class="nom" title="${ech(e.nom_complet)}">${ech(e.nom_complet)}</th>
           ${POP.aesh.map(a => { const v = paires[`${a.id}|${e.id}`] || 0;
             return `<td class="p${v}"><select data-k="${a.id}|${e.id}">${OPTIONS.map(([val,lib])=>
               `<option value="${val}" ${val===v?"selected":""}>${lib}</option>`).join("")}</select></td>`;}).join("")}
         </tr>`).join("")}
-      </table>
+      </table></div>
     </div>`;
   const sauverPoids = async () => {
     const p = {};
@@ -1351,7 +1357,7 @@ ECRANS.resultat = async () => {
     </div>
     <div class="carte" style="padding:10px">
       <b style="padding-left:6px">Par AESH</b>
-      <div class="defile" style="max-height:320px"><table>
+      <div class="defile"><table>
         <tr><th>AESH</th><th class="num">Quotité</th><th class="num">Affecté</th>
             <th class="num">Nb élèves</th><th>Élèves suivis</th></tr>
         ${r.aesh.map(b => `<tr><td>${ech(b.nom)}</td><td class="num">${b.quotite} h</td>
@@ -1361,7 +1367,7 @@ ECRANS.resultat = async () => {
     </div>
     ${r.non_couverts.length ? `<div class="carte" style="padding:10px">
       <b style="padding-left:6px">Heures non couvertes et pourquoi</b>
-      <div class="defile" style="max-height:300px"><table>
+      <div class="defile"><table>
         <tr><th>Élève</th><th class="num">Heures</th><th>Causes</th></tr>
         ${r.non_couverts.map(n => `<tr><td>${ech(n.eleve)}</td><td class="num">${n.heures} h</td>
           <td>${Object.entries(n.causes).map(([c,v])=>`${ech(c)} (${v})`).join(" · ")}</td></tr>`).join("")}
