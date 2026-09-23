@@ -25,6 +25,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from .matieres import FAMILLES
 from .pronote import JOURS, PAS_MINUTES
 
+TYPES_PERIODE = {"stage": "Stage / PFMP", "integration": "Journée d'intégration",
+                 "ccf": "CCF — accompagnement obligatoire", "autre": "Autre absence"}
+
 MARQUE = "X"
 DISPOSITION = {
     "ligne_titre": 1, "ligne_consigne": 2, "ligne_entete": 4, "premiere_ligne_grille": 5,
@@ -264,6 +267,12 @@ PALETTE = ["FFE0B2", "C8E6C9", "BBDEFB", "F8BBD0", "D1C4E9", "FFF9C4", "B2DFDB",
            "FFECB3", "E6EE9C", "F0F4C3", "D0D9FF"]
 
 
+def couleurs_aesh(resultat):
+    """{nom d'AESH: couleur} — pour colorer l'emploi du temps d'un élève selon qui l'accompagne."""
+    noms = sorted({a["aesh_nom"] for a in resultat["affectations"]})
+    return {nom: PALETTE[i % len(PALETTE)] for i, nom in enumerate(noms)}
+
+
 def couleurs_eleves(resultat):
     """{nom d'élève: couleur}, dans l'ordre d'apparition pour que la légende suive le tableau."""
     noms = sorted({a["eleve_nom"] for a in resultat["affectations"]})
@@ -354,6 +363,44 @@ def _fond_html(noms, couleurs):
     return f"background:repeating-linear-gradient(135deg,{arrets.rstrip(',')})"
 
 
+def _grille_html(grille, h_min, nb_creneaux, couleurs, titre_horaires="Horaires"):
+    """Tableau HTML d'une grille hebdomadaire, semaines A/B fusionnées quand elles coïncident."""
+    blocs = {jour: blocs_jour(grille, jour, nb_creneaux) for jour in range(len(JOURS_SEMAINE))}
+    occupees, depart_de = set(), {}
+    for jour, liste in blocs.items():
+        for premier, hauteur, largeur, colonne, texte, noms in liste:
+            depart_de[(premier, jour, colonne)] = (hauteur, largeur, texte, noms)
+            for ligne in range(premier, premier + hauteur):
+                for k in range(largeur):
+                    if (ligne, jour, colonne + k) != (premier, jour, colonne):
+                        occupees.add((ligne, jour, colonne + k))
+    largeur_colonne = round(88 / (len(JOURS_SEMAINE) * 2), 3)
+    morceaux = ["<table><colgroup><col style='width:74px'>"
+                + f"<col style='width:{largeur_colonne}%'>" * (len(JOURS_SEMAINE) * 2)
+                + f"</colgroup><tr><th rowspan='2'>{titre_horaires}</th>"
+                + "".join(f"<th colspan='2'>{j}</th>" for j in JOURS_SEMAINE) + "</tr><tr>"
+                + "".join("<th class='ab'>sem. A</th><th class='ab'>sem. B</th>"
+                          for _ in JOURS_SEMAINE) + "</tr>"]
+    for s in range(nb_creneaux):
+        morceaux.append(f"<tr><td class='h'>{_libelle_creneau(h_min, s)}</td>")
+        for jour in range(len(JOURS_SEMAINE)):
+            for colonne in (0, 1):
+                if (s, jour, colonne) in occupees:
+                    continue
+                bloc = depart_de.get((s, jour, colonne))
+                if not bloc:
+                    morceaux.append("<td></td>")
+                    continue
+                hauteur, largeur, texte, noms = bloc
+                attributs = (f" rowspan='{hauteur}'" if hauteur > 1 else "") \
+                            + (f" colspan='{largeur}'" if largeur > 1 else "")
+                morceaux.append(f"<td{attributs} style=\"{_fond_html(noms, couleurs)}\">"
+                                f"{html.escape(texte)}</td>")
+        morceaux.append("</tr>")
+    morceaux.append("</table>")
+    return "".join(morceaux)
+
+
 def emplois_du_temps_html(projet, resultat):
     h_min, h_max = projet.etat.get("plage") or (7, 18)
     nb_creneaux = (h_max - h_min) * 60 // PAS_MINUTES
@@ -361,6 +408,15 @@ def emplois_du_temps_html(projet, resultat):
     infos_aesh = {a["id"]: a for a in resultat["aesh"]}
     couleurs = couleurs_eleves(resultat)
     synthese = resultat["synthese"]
+    # Les périodes déjà calculées viennent enrichir chaque emploi du temps ; les couleurs des élèves
+    # qui n'apparaissent que là sont ajoutées pour que la légende reste complète.
+    periodes_calculees = []
+    for periode in projet.periodes():
+        r = (projet.etat.get("resultats_periodes") or {}).get(periode["id"])
+        if r and r.get("affectations"):
+            periodes_calculees.append({"resultat": r})
+            for a in r["affectations"]:
+                couleurs.setdefault(a["eleve_nom"], PALETTE[len(couleurs) % len(PALETTE)])
 
     style = """body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:22px;color:#1f2933;font-size:13px}
 h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:30px 0 2px;border-top:2px solid #999;padding-top:10px}
@@ -370,6 +426,7 @@ td,th{border:1px solid #9aa0a6;padding:3px 4px;vertical-align:middle;white-space
       font-size:10.5px;text-align:center;overflow:hidden}
 th{background:#e4e7ea;font-size:11px}th.ab{background:#eef0f2;font-weight:normal;font-style:italic;font-size:9px}
 td.h{background:#f2f4f6;font-weight:600;width:74px;font-size:10px}
+h3{font-size:13.5px;margin:22px 0 0;color:#2b5a8a}
 .legende{margin:10px 0 4px;display:flex;flex-wrap:wrap;gap:5px}
 .legende span{border:1px solid #9aa0a6;border-radius:3px;padding:2px 8px;font-size:11px}
 @media print{h2{page-break-before:always}h2:first-of-type{page-break-before:auto}}"""
@@ -390,40 +447,31 @@ td.h{background:#f2f4f6;font-weight:600;width:74px;font-size:10px}
         parties.append(f"<h2>{html.escape(infos.get('nom', id_aesh))}</h2>"
                        f"<p class='sub'>{infos.get('heures_affectees', 0)} h affectées sur "
                        f"{infos.get('quotite', 0):g} h de quotité · {infos.get('nb_eleves', 0)} élève(s) suivis</p>")
-        blocs = {jour: blocs_jour(grille, jour, nb_creneaux) for jour in range(len(JOURS_SEMAINE))}
-        occupees = set()          # (ligne, jour, colonne) couvertes par un bloc commencé plus haut
-        depart_de = {}
-        for jour, liste in blocs.items():
-            for premier, hauteur, largeur, colonne, texte, noms in liste:
-                depart_de[(premier, jour, colonne)] = (hauteur, largeur, texte, noms)
-                for ligne in range(premier, premier + hauteur):
-                    for k in range(largeur):
-                        if (ligne, jour, colonne + k) != (premier, jour, colonne):
-                            occupees.add((ligne, jour, colonne + k))
-        largeur_colonne = round(88 / (len(JOURS_SEMAINE) * 2), 3)
-        parties.append("<table><colgroup><col style='width:74px'>"
-                       + f"<col style='width:{largeur_colonne}%'>" * (len(JOURS_SEMAINE) * 2)
-                       + "</colgroup><tr><th rowspan='2'>Horaires</th>"
-                       + "".join(f"<th colspan='2'>{j}</th>" for j in JOURS_SEMAINE) + "</tr><tr>"
-                       + "".join("<th class='ab'>sem. A</th><th class='ab'>sem. B</th>"
-                                 for _ in JOURS_SEMAINE) + "</tr>")
-        for s in range(nb_creneaux):
-            parties.append(f"<tr><td class='h'>{_libelle_creneau(h_min, s)}</td>")
-            for jour in range(len(JOURS_SEMAINE)):
-                for colonne in (0, 1):
-                    if (s, jour, colonne) in occupees:
-                        continue
-                    bloc = depart_de.get((s, jour, colonne))
-                    if not bloc:
-                        parties.append("<td></td>")
-                        continue
-                    hauteur, largeur, texte, noms = bloc
-                    attributs = (f" rowspan='{hauteur}'" if hauteur > 1 else "") \
-                                + (f" colspan='{largeur}'" if largeur > 1 else "")
-                    parties.append(f"<td{attributs} style=\"{_fond_html(noms, couleurs)}\">"
-                                   f"{html.escape(texte)}</td>")
-            parties.append("</tr>")
-        parties.append("</table>")
+        parties.append(_grille_html(grille, h_min, nb_creneaux, couleurs))
+
+        # Périodes particulières : ce que devient l'emploi du temps de cet AESH quand des élèves
+        # sont en stage, en journée d'intégration ou en CCF. C'est là que se lit la redistribution.
+        for periode in periodes_calculees:
+            grille_periode = {}
+            for a in periode["resultat"]["affectations"]:
+                if a["aesh"] == id_aesh:
+                    grille_periode.setdefault((a["parite"], a["jour"], a["creneau"]), []).append(a)
+            infos_periode = periode["resultat"]["periode"]
+            bilan = next((b for b in periode["resultat"]["aesh"] if b["id"] == id_aesh), {})
+            parties.append(
+                f"<h3>{html.escape(infos_periode.get('nom') or 'Période')} — "
+                f"{html.escape(TYPES_PERIODE.get(infos_periode.get('type'), infos_periode.get('type') or ''))}</h3>"
+                f"<p class='sub'>du {html.escape(infos_periode.get('debut', ''))} au "
+                f"{html.escape(infos_periode.get('fin', ''))}"
+                + (f" · élèves absents : {html.escape(', '.join(infos_periode.get('absents') or []))}"
+                   if infos_periode.get("absents") else "")
+                + f" · {bilan.get('heures_affectees', 0)} h affectées, "
+                  f"{bilan.get('nb_eleves', 0)} élève(s)</p>")
+            if grille_periode:
+                parties.append(_grille_html(grille_periode, h_min, nb_creneaux, couleurs))
+            else:
+                parties.append("<p class='sub'>aucune affectation sur cette période</p>")
+
     parties.append("</body></html>")
 
     chemin = _dossier_sortie(projet) / f"EDT_AESH_{_horodatage()}.html"
@@ -509,4 +557,116 @@ def emplois_du_temps_xlsx(projet, resultat):
 
     chemin = _dossier_sortie(projet) / f"EDT_AESH_{_horodatage()}.xlsx"
     classeur.save(chemin)
+    return chemin
+
+
+# ───────────────────────────── Emplois du temps des élèves ─────────────────────────────
+
+def emplois_du_temps_eleves(projet, resultat):
+    """
+    Emploi du temps de chaque élève, coloré selon l'AESH qui l'accompagne.
+
+    C'est la vue symétrique de celle des AESH : l'élève y voit sa semaine ordinaire, et d'un coup
+    d'œil qui l'accompagne à quel moment — une couleur par accompagnant, les cours sans
+    accompagnement restant en gris.
+    """
+    h_min, h_max = projet.etat.get("plage") or (7, 18)
+    nb_creneaux = (h_max - h_min) * 60 // PAS_MINUTES
+    population = projet.population()
+    grilles, _, _ = projet.grilles(population)
+    couleurs = couleurs_aesh(resultat)
+    par_eleve = {}
+    for a in resultat["affectations"]:
+        par_eleve.setdefault(a["eleve"], {})[(a["parite"], a["jour"], a["creneau"])] = a
+    bilans = {b["id"]: b for b in resultat["eleves"]}
+
+    style = """body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:22px;color:#1f2933;font-size:13px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:30px 0 2px;border-top:2px solid #999;padding-top:10px}
+.sub{color:#5b6570;font-style:italic;margin:2px 0 10px}
+table{border-collapse:collapse;margin:6px 0;table-layout:fixed;width:100%}
+td,th{border:1px solid #9aa0a6;padding:3px 4px;vertical-align:middle;white-space:pre-line;
+      font-size:10.5px;text-align:center;overflow:hidden}
+th{background:#e4e7ea;font-size:11px}th.ab{background:#eef0f2;font-weight:normal;font-style:italic;font-size:9px}
+td.h{background:#f2f4f6;font-weight:600;width:74px;font-size:10px}
+td.seul{background:#f4f5f6;color:#5b6570}
+.legende{margin:10px 0 4px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.legende span{border:1px solid #9aa0a6;border-radius:3px;padding:2px 8px;font-size:11px}
+@media print{h2{page-break-before:always}h2:first-of-type{page-break-before:auto}}"""
+
+    parties = [f"<!doctype html><html lang='fr'><head><meta charset='utf-8'>"
+               f"<title>Emplois du temps des élèves</title><style>{style}</style></head><body>",
+               f"<h1>Emplois du temps des élèves — {html.escape(projet.etat.get('etablissement') or '')}</h1>",
+               f"<p class='sub'>Semaines types S{' et S'.join(str(s) for s in projet.etat.get('semaines_types') or [])} · "
+               f"couleur = accompagnant · gris = cours sans accompagnement</p>",
+               "<div class='legende'>" + "".join(
+                   f"<span style='background:#{c}'>{html.escape(n)}</span>" for n, c in couleurs.items())
+               + "<span style='background:#f4f5f6;color:#5b6570'>sans accompagnement</span></div>"]
+
+    for eleve in sorted(population["eleves"], key=lambda e: e["nom_complet"]):
+        creneaux = grilles.get(eleve["id"])
+        if not creneaux:
+            continue
+        bilan = bilans.get(eleve["id"], {})
+        accompagne = par_eleve.get(eleve["id"], {})
+        taux = bilan.get("taux")
+        parties.append(
+            f"<h2>{html.escape(eleve['nom_complet'])}"
+            + (f" — {html.escape(eleve.get('classe') or eleve.get('niveau') or '')}" if eleve.get('classe') or eleve.get('niveau') else "")
+            + "</h2>"
+            f"<p class='sub'>aide {eleve.get('type_aide') or '—'} · {eleve.get('heures', 0):g} h notifiées · "
+            f"{bilan.get('heures_couvertes', 0)} h accompagnées"
+            + (f" ({taux} %)" if taux is not None else "")
+            + (f" · accompagnant(s) : {html.escape(', '.join(bilan.get('aesh') or []))}"
+               if bilan.get("aesh") else " · aucun accompagnement") + "</p>")
+
+        # même découpage que pour les AESH : blocs verticaux, semaines A et B fusionnées si identiques
+        grille_affichage = {}
+        for (parite, jour, creneau), cours in creneaux.items():
+            a = accompagne.get((parite, jour, creneau))
+            grille_affichage.setdefault((parite, jour, creneau), []).append(
+                {"eleve_nom": a["aesh_nom"] if a else "", "eleve": a["aesh"] if a else "",
+                 "matiere": cours["matiere"], "salle": cours.get("salle", ""),
+                 "id_cours": cours["id_cours"] + ("" if a else "~libre")})
+        blocs = {jour: blocs_jour(grille_affichage, jour, nb_creneaux) for jour in range(len(JOURS_SEMAINE))}
+        occupees, depart_de = set(), {}
+        for jour, liste in blocs.items():
+            for premier, hauteur, largeur, colonne, texte, noms in liste:
+                depart_de[(premier, jour, colonne)] = (hauteur, largeur, texte, noms)
+                for ligne in range(premier, premier + hauteur):
+                    for k in range(largeur):
+                        if (ligne, jour, colonne + k) != (premier, jour, colonne):
+                            occupees.add((ligne, jour, colonne + k))
+        largeur_colonne = round(88 / (len(JOURS_SEMAINE) * 2), 3)
+        parties.append("<table><colgroup><col style='width:74px'>"
+                       + f"<col style='width:{largeur_colonne}%'>" * (len(JOURS_SEMAINE) * 2)
+                       + "</colgroup><tr><th rowspan='2'>Horaires</th>"
+                       + "".join(f"<th colspan='2'>{j}</th>" for j in JOURS_SEMAINE) + "</tr><tr>"
+                       + "".join("<th class='ab'>sem. A</th><th class='ab'>sem. B</th>"
+                                 for _ in JOURS_SEMAINE) + "</tr>")
+        for s in range(nb_creneaux):
+            parties.append(f"<tr><td class='h'>{_libelle_creneau(h_min, s)}</td>")
+            for jour in range(len(JOURS_SEMAINE)):
+                for colonne in (0, 1):
+                    if (s, jour, colonne) in occupees:
+                        continue
+                    bloc = depart_de.get((s, jour, colonne))
+                    if not bloc:
+                        parties.append("<td></td>")
+                        continue
+                    hauteur, largeur, texte, noms = bloc
+                    attributs = (f" rowspan='{hauteur}'" if hauteur > 1 else "") \
+                                + (f" colspan='{largeur}'" if largeur > 1 else "")
+                    accompagnants = [n for n in noms if n]
+                    if accompagnants:
+                        parties.append(f"<td{attributs} style=\"{_fond_html(accompagnants, couleurs)}\">"
+                                       f"{html.escape(texte)}</td>")
+                    else:
+                        propre = "\n".join(l for l in texte.split("\n") if l.strip())
+                        parties.append(f"<td{attributs} class='seul'>{html.escape(propre)}</td>")
+            parties.append("</tr>")
+        parties.append("</table>")
+    parties.append("</body></html>")
+
+    chemin = _dossier_sortie(projet) / f"EDT_eleves_{_horodatage()}.html"
+    chemin.write_text("".join(parties), encoding="utf-8")
     return chemin

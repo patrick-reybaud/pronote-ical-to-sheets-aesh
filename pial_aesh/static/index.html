@@ -115,6 +115,7 @@ const ETAPES = [
   ["eleves",       "Élèves & efforts"],
   ["aesh",         "AESH & affinités"],
   ["mutualisation","Mutualisation"],
+  ["periodes",     "Stages & CCF"],
   ["ponderations", "Pondérations & règles"],
   ["calcul",       "Calcul"],
   ["resultat",     "Emplois du temps"],
@@ -145,7 +146,7 @@ function dessinerNav() {
   const dispo = ouvert && Object.values(E.etat?.dispos || {})
     .some(g => lignesDispos(g).some(l => Array.isArray(l) && l.some(Boolean)));
   const actif = {projet:true, import:ouvert, etablissement:pial, semaines:pial&&ics&&etab,
-                 eleves:etab&&sem, aesh:etab&&sem, mutualisation:etab&&sem,
+                 eleves:etab&&sem, aesh:etab&&sem, mutualisation:etab&&sem, periodes:etab&&sem,
                  ponderations:etab&&sem, calcul:dispo,
                  resultat: !!E.etat?.resultat};
   $("#nav").innerHTML = ETAPES.map(([cle, nom], i) =>
@@ -862,8 +863,9 @@ ECRANS.aesh = async () => {
   $("#ecran").innerHTML = `
     <h2>AESH & affinités</h2>
     <p class="aide">Notez de <b>1 à 5</b> l'aisance déclarée de chaque AESH par famille de matières
-      (vide = neutre). Renseignez ensuite leurs <b>disponibilités</b> : à la main ci-dessous, ou en
-      envoyant le classeur de recueil et en le réimportant une fois rempli.</p>
+      (vide = neutre). <b>0 signifie un refus</b> : l'accompagnant ne sera jamais placé sur cette
+      matière, quoi qu'il arrive. Renseignez ensuite leurs <b>disponibilités</b> : à la main
+      ci-dessous, ou en envoyant le classeur de recueil et en le réimportant une fois rempli.</p>
     <div class="carte">
       <div class="ligne">
         <button class="action secondaire" id="telecharger-recueil">Générer le classeur de recueil (.xlsx)</button>
@@ -886,6 +888,17 @@ ECRANS.aesh = async () => {
         <span style="color:#5b6570">cliquez ou faites glisser sur la grille</span>
       </div>
       <div id="grille-dispo"></div>
+    </div>
+    <div class="carte">
+      <b>Élèves confiés à cet AESH</b>
+      <p class="aide" style="margin:6px 0 10px">Utile lorsqu'un élève a l'habitude d'être accompagné
+        par la même personne. <b>Imposer</b> garantit au moins un créneau ensemble, <b>privilégier</b>
+        pèse sans contraindre, <b>interdire</b> exclut le binôme. Ces réglages sont les mêmes que ceux
+        du tableau croisé de l'écran « Pondérations ».</p>
+      <div class="defile" style="max-height:300px"><table>
+        <tr><th>Élève</th><th>Aide</th><th class="num">Notifié</th><th style="width:190px">Décision</th></tr>
+        <tbody id="corps-paires"></tbody>
+      </table></div>
     </div>`;
   brancherNotes(valeurs, v => enregistrer({affinites: v}));
   $("#telecharger-recueil").onclick = () => location.href = "/api/recueil";
@@ -925,8 +938,29 @@ ECRANS.aesh = async () => {
     $("#tout-cocher").onclick = () => { d.grille.forEach(l => l.fill(true)); dessinerGrille().then(sauver); };
     $("#tout-decocher").onclick = () => { d.grille.forEach(l => l.fill(false)); sauver().then(dessinerGrille); };
   };
-  $("#choix-aesh").onchange = dessinerGrille;
-  dessinerGrille();
+  const PREFERENCES = [[0,"—"],[2,"imposer"],[1,"privilégier"],[-1,"éviter"],[-2,"interdire"]];
+  const paires = structuredClone(E.etat.paires || {});
+  const dessinerPaires = () => {
+    const idAesh = $("#choix-aesh").value;
+    $("#corps-paires").innerHTML = POP.eleves.map(e => {
+      const v = paires[`${idAesh}|${e.id}`] || 0;
+      return `<tr><td>${ech(e.nom_complet)}${e.a_edt ? "" : " <span class='pastille ko'>sans EDT</span>"}</td>
+        <td>${e.type_aide || "—"}</td><td class="num">${e.heures || 0} h</td>
+        <td class="${v < 0 ? "p-2" : v > 0 ? "p2" : ""}">
+          <select class="pref" data-k="${idAesh}|${e.id}" style="width:100%">
+            ${PREFERENCES.map(([val, lib]) =>
+              `<option value="${val}" ${val === v ? "selected" : ""}>${lib}</option>`).join("")}
+          </select></td></tr>`;
+    }).join("");
+    document.querySelectorAll("select.pref").forEach(sel => sel.onchange = async () => {
+      const v = +sel.value;
+      if (v) paires[sel.dataset.k] = v; else delete paires[sel.dataset.k];
+      sel.parentElement.className = v < 0 ? "p-2" : v > 0 ? "p2" : "";
+      await enregistrer({paires});
+    });
+  };
+  $("#choix-aesh").onchange = () => { dessinerGrille(); dessinerPaires(); };
+  dessinerGrille(); dessinerPaires();
 };
 
 ECRANS.mutualisation = async () => {
@@ -1001,6 +1035,118 @@ ECRANS.mutualisation = async () => {
     sel.parentElement.className = v<0 ? "p-2" : v>0 ? "p2" : "";
     await enregistrer({paires_eleves: paires});
   });
+};
+
+ECRANS.periodes = async () => {
+  const d = await api("/api/periodes");
+  const periodes = structuredClone(d.periodes || []);
+  const dessine = () => {
+    $("#liste-periodes").innerHTML = periodes.length ? periodes.map((p, i) => `
+      <div class="carte" style="margin-bottom:10px">
+        <div class="ligne">
+          <input type="text" class="p-nom" data-i="${i}" value="${ech(p.nom || "")}"
+                 placeholder="Nom, ex. PFMP 1" style="width:200px">
+          <select class="p-type" data-i="${i}">
+            ${Object.entries(d.types).map(([v, l]) =>
+              `<option value="${v}" ${p.type === v ? "selected" : ""}>${ech(l)}</option>`).join("")}
+          </select>
+          du <input type="date" class="p-debut" data-i="${i}" value="${ech(p.debut || "")}">
+          au <input type="date" class="p-fin" data-i="${i}" value="${ech(p.fin || "")}">
+          <span style="color:#5b6570">${(p.semaines || []).length
+            ? "semaines S" + p.semaines.join(", S") : ""}</span>
+          <button class="action p-suppr" data-i="${i}"
+                  style="margin-left:auto;background:#fff;color:#b3261e;border:1px solid #b3261e">Retirer</button>
+        </div>
+        <div class="ligne" style="align-items:flex-start">
+          <label style="min-width:110px;padding-top:4px">Élèves concernés</label>
+          <div class="exclusions" style="flex:1">
+            ${d.eleves.map(e => `<label class="${(p.eleves || []).includes(e.id) ? "" : "retiree"}">
+              <input type="checkbox" class="p-eleve" data-i="${i}" value="${e.id}"
+                     ${(p.eleves || []).includes(e.id) ? "checked" : ""}> ${ech(e.nom)}</label>`).join("")}
+          </div>
+        </div>
+        <div class="ligne">
+          <button class="action secondaire p-calc" data-i="${i}">Calculer l'affectation de cette période</button>
+          <span>${p.calcule
+            ? `<span class="pastille ok">calculée</span> couverture ${p.synthese.taux_global} %,
+               plancher ${p.synthese.taux_minimal} %`
+            : "<span class='pastille neutre'>pas encore calculée</span>"}</span>
+        </div>
+      </div>`).join("") : message("info", "Aucune période déclarée.");
+    brancher();
+  };
+  const sauver = async () => {
+    await api("/api/periodes", {method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({periodes})});
+  };
+  const brancher = () => {
+    const maj = (classe, champ) => document.querySelectorAll("." + classe).forEach(c =>
+      c.onchange = async () => { periodes[+c.dataset.i][champ] = c.value; await sauver();
+                                 if (champ === "debut" || champ === "fin") dessiner(); });
+    maj("p-nom", "nom"); maj("p-type", "type"); maj("p-debut", "debut"); maj("p-fin", "fin");
+    document.querySelectorAll(".p-eleve").forEach(c => c.onchange = async () => {
+      const p = periodes[+c.dataset.i];
+      p.eleves = [...document.querySelectorAll(`.p-eleve[data-i="${c.dataset.i}"]:checked`)]
+        .map(x => x.value);
+      c.closest("label").classList.toggle("retiree", !c.checked);
+      await sauver();
+    });
+    document.querySelectorAll(".p-suppr").forEach(b => b.onclick = async () => {
+      periodes.splice(+b.dataset.i, 1); await sauver(); dessine();
+    });
+    document.querySelectorAll(".p-calc").forEach(b => b.onclick = async () => {
+      const p = periodes[+b.dataset.i];
+      if (!p.debut || !p.fin) { $("#retour-periodes").innerHTML =
+        message("err", "Renseignez les dates de début et de fin."); return; }
+      b.disabled = true; b.innerHTML = `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span>Calcul…`;
+      try {
+        const r = await api(`/api/periodes/${encodeURIComponent(p.id)}/calculer`,
+          {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({exigence: "standard"})});
+        const sansEdt = r.periode?.sans_emploi_du_temps || [];
+        const ccf = r.synthese?.ccf_impossibles || [];
+        if (!r.affectations?.length) {
+          $("#retour-periodes").innerHTML = message("err", ech(r.message || r.statut));
+        } else {
+          let texte = message("succes",
+            `<b>${ech(p.nom)}</b> : couverture ${r.synthese.taux_global} %, plancher `
+            + `${r.synthese.taux_minimal} %, ${r.aesh.length} AESH mobilisés sur `
+            + `${r.eleves.length} élève(s) présents.`);
+          if (sansEdt.length) texte += message("avert",
+            `<b>${sansEdt.length} élève(s) n'ont aucun cours sur ces semaines</b> dans les exports
+             fournis — ${ech(sansEdt.slice(0, 6).join(", "))}${sansEdt.length > 6 ? " …" : ""}.
+             Ils ne sont pas pris en compte pour cette période. Si ce ne sont pas des absences
+             réelles, c'est que l'export ProNote ne couvre pas ces semaines : réimportez un export
+             d'année complète.`);
+          if (p.type === "ccf") texte += ccf.length
+            ? message("err", `<b>${ccf.length} CCF n'ont pas pu être couverts :</b> `
+                + ccf.map(c => `${ech(c.eleve)} — ${ech(c.matiere)}`).join(" · "))
+            : message("info", "Tous les CCF de cette période sont couverts.");
+          $("#retour-periodes").innerHTML = texte;
+        }
+        dessiner();
+      } catch (e) { $("#retour-periodes").innerHTML = erreurAffichee(e); }
+    });
+  };
+  $("#ecran").innerHTML = `
+    <h2>Stages, journées d'intégration &amp; CCF</h2>
+    <p class="aide"><b>ProNote n'exporte rien de tout cela</b> — ni les stages, ni les journées
+      d'intégration, ni les CCF : les seules catégories exportées sont les cours, les vacances et les
+      jours fériés. Ces périodes sont donc à déclarer ici, vous êtes seule à les connaître.</p>
+    <p class="aide">Pendant un <b>stage</b> ou une <b>journée d'intégration</b>, les élèves concernés
+      ne sont pas accompagnés et leurs AESH sont <b>redistribués sur les autres élèves</b> : chaque
+      période reçoit sa propre affectation, qui apparaît sous l'emploi du temps de chaque AESH.
+      Un <b>CCF</b> fonctionne à l'inverse : les élèves concernés doivent être accompagnés sur toute
+      la durée de l'épreuve, et le calcul le garantit.</p>
+    <div class="ligne"><button class="action" id="ajouter-periode">Ajouter une période</button></div>
+    <div id="retour-periodes"></div>
+    <div id="liste-periodes"></div>`;
+  $("#ajouter-periode").onclick = async () => {
+    periodes.push({id: "p" + Date.now().toString(36), nom: "", type: "stage",
+                   debut: "", fin: "", eleves: []});
+    await sauver(); dessine();
+  };
+  dessine();
 };
 
 ECRANS.ponderations = async () => {
@@ -1090,17 +1236,17 @@ ECRANS.ponderations = async () => {
 ECRANS.calcul = async () => {
   $("#ecran").innerHTML = `
     <h2>Calcul</h2>
-    <p class="aide">Le calcul explore les affectations possibles et retient la meilleure combinaison selon
-      vos règles. Il s'arrête au temps imparti en donnant la meilleure solution trouvée : allonger le temps
-      améliore la qualité, sans jamais violer une règle dure.</p>
+    <p class="aide">Le calcul cherche la meilleure combinaison possible et s'arrête <b>quand il
+      n'améliore plus</b> — pas au bout d'un temps fixé d'avance, qui ne voudrait rien dire. Il rend
+      toujours une solution qui respecte toutes les règles dures ; chercher plus longtemps ne fait
+      qu'affiner la qualité.</p>
     <div class="carte">
       <div class="ligne">
-        <label>Temps de calcul</label>
-        <select id="secondes">
-          <option value="15">15 secondes — aperçu rapide</option>
-          <option value="30" selected>30 secondes — usage courant</option>
-          <option value="90">90 secondes — affiner</option>
-          <option value="300">5 minutes — résultat final</option>
+        <label>Jusqu'où chercher</label>
+        <select id="exigence">
+          ${Object.entries(E.exigences || {}).map(([cle, v]) => `
+            <option value="${cle}" ${cle === "standard" ? "selected" : ""}>${ech(v.libelle)}
+              — s'arrête après ${v.patience} s sans progrès</option>`).join("")}
         </select>
         <button class="action" id="lancer">Lancer le calcul</button>
       </div>
@@ -1110,10 +1256,11 @@ ECRANS.calcul = async () => {
     const bouton = $("#lancer"), retour = $("#retour-calcul");
     bouton.disabled = true;
     bouton.innerHTML = `<span class="chargement"></span>Calcul en cours…`;
-    retour.innerHTML = message("info", "Recherche de la meilleure affectation…");
+    retour.innerHTML = message("info",
+      "Recherche en cours. Elle s'arrêtera d'elle-même quand elle cessera de progresser.");
     try {
       const r = await api("/api/calculer", {method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({secondes: +$("#secondes").value})});
+        body: JSON.stringify({exigence: $("#exigence").value})});
       await majEtat();
       if (!r.affectations?.length) { retour.innerHTML = message("err", ech(r.message || r.statut)); }
       else { etape = "resultat"; dessinerNav(); dessiner(); return; }
@@ -1139,10 +1286,16 @@ ECRANS.resultat = async () => {
       <div class="stat"><b>${s.heures_couvertes} h</b><span>couvertes sur ${s.heures_notifiees} h notifiées</span></div>
       <div class="stat"><b>${s.capacite_aesh} h</b><span>capacité AESH totale</span></div>
       <div class="ligne" style="margin-top:16px">
-        <button class="action" id="exp-xlsx">Télécharger les emplois du temps (.xlsx)</button>
-        <button class="action secondaire" id="exp-html">Version imprimable (.html)</button>
+        <button class="action" id="exp-xlsx">Emplois du temps des AESH (.xlsx)</button>
+        <button class="action secondaire" id="exp-html">AESH — version imprimable (.html)</button>
+        <button class="action secondaire" id="exp-eleves">Emplois du temps des élèves (.html)</button>
       </div>
+      ${r.recherche ? `<p class="aide" style="margin:10px 0 0">Recherche « ${ech(r.recherche.exigence)} » :
+        ${r.recherche.duree} s, ${r.recherche.ameliorations} amélioration(s), arrêtée car
+        <b>${ech(r.recherche.arret)}</b>.</p>` : ""}
     </div>
+    ${(s.ccf_impossibles||[]).length ? message("err",
+      "<b>CCF non couverts :</b> " + s.ccf_impossibles.map(c=>`${ech(c.eleve)} — ${ech(c.matiere)}`).join(" · ")) : ""}
     ${(s.eleves_hors_calcul||[]).length ? message("avert",
       "<b>Hors calcul :</b> " + s.eleves_hors_calcul.map(x=>`${ech(x.eleve)} (${ech(x.raison)})`).join(" · ")) : ""}
     <div class="carte" style="padding:10px">
@@ -1175,6 +1328,7 @@ ECRANS.resultat = async () => {
       </table></div></div>` : ""}`;
   $("#exp-xlsx").onclick = () => location.href = "/api/export/xlsx";
   $("#exp-html").onclick = () => location.href = "/api/export/html";
+  $("#exp-eleves").onclick = () => location.href = "/api/export/eleves";
   await ajustementAffectations();
 };
 

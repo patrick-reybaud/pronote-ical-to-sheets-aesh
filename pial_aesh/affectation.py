@@ -17,6 +17,8 @@ Le modèle distingue deux familles de règles, et l'interface les montre toutes 
 Les poids sont tous exposés à l'utilisateur ; aucun n'est figé dans le code.
 """
 
+import threading
+import time
 from collections import defaultdict
 from itertools import combinations
 
@@ -57,6 +59,8 @@ REGLES_DURES = [
     ("H10", "Un élève n'est pas accompagné par plus d'AESH différents que le plafond fixé"),
     ("H11", "Chaque AESH garde une pause continue d'au moins une heure entre 11 h et 14 h"),
     ("H12", "Les cours confiés à la main depuis l'écran des résultats sont respectés"),
+    ("H13", "Un AESH n'est jamais placé sur une matière qu'il a refusée (affinité 0)"),
+    ("H14", "Un élève noté en CCF est accompagné sur toute la durée de l'épreuve"),
 ]
 
 REGLES_SOUPLES = [
@@ -84,7 +88,7 @@ class Probleme:
     def __init__(self, eleves, aesh, efforts, affinites, paires, famille_de,
                  poids=None, max_mutualise=2, precedent=None,
                  mutualisation=None, paires_eleves=None, max_aesh_par_eleve=0,
-                 pause=None, cours_imposes=None, h_min=7):
+                 pause=None, cours_imposes=None, h_min=7, cours_obligatoires=None):
         self.eleves = eleves
         self.aesh = aesh
         self.efforts = efforts or {}
@@ -102,6 +106,8 @@ class Probleme:
         self.pause = {"debut": 11, "fin": 14, "minutes": 60, **(pause or {})}
         # Affectations imposées au cours près : {"<élève>|<parité>|<id_cours>": "<id AESH>"}
         self.cours_imposes = cours_imposes or {}
+        # Cours à couvrir impérativement (CCF) : clés « <élève>|<parité>|<id_cours> »
+        self.cours_obligatoires = set(cours_obligatoires or ())
         self.h_min = h_min
 
     def exclusif(self, eleve):
@@ -129,13 +135,64 @@ class Probleme:
         return saisie if saisie else EFFORTS_PAR_DEFAUT.get(famille, NOTE_NEUTRE)
 
     def note_affinite(self, id_aesh, famille):
-        return self.affinites.get(id_aesh, {}).get(famille, NOTE_NEUTRE)
+        saisie = self.affinites.get(id_aesh, {}).get(famille)
+        return NOTE_NEUTRE if saisie is None else saisie
+
+    def refuse_matiere(self, id_aesh, famille):
+        """
+        0 dans la grille d'affinités signifie « je ne prends pas cette matière ».
+
+        Ce n'est pas un malus très fort mais un refus : un accompagnant qui ne se sent pas de tenir
+        un TP de cuisine ne doit pas s'y retrouver parce que le calcul n'avait rien de mieux.
+        """
+        return self.affinites.get(id_aesh, {}).get(famille) == 0
 
     def ponderation(self, id_aesh, id_eleve):
         return self.paires.get(f"{id_aesh}|{id_eleve}", 0)
 
 
-def resoudre(probleme, secondes=20, journal=None):
+# Niveaux d'exigence proposés à l'utilisateur. « patience » est le temps sans amélioration au bout
+# duquel on considère que le calcul a donné ce qu'il avait ; « plafond » est une sécurité absolue.
+EXIGENCES = {
+    "rapide":     {"patience": 5, "plafond": 90, "libelle": "Aperçu rapide"},
+    "standard":   {"patience": 15, "plafond": 300, "libelle": "Résultat de travail"},
+    "approfondi": {"patience": 45, "plafond": 900, "libelle": "Résultat final"},
+}
+
+
+class _Progression:
+    """
+    Suit les solutions successives et arrête la recherche quand elle n'améliore plus.
+
+    Compter en minutes n'a pas de sens pour l'utilisateur : ce qui l'intéresse, c'est d'avoir le
+    meilleur résultat que le calcul sait produire. On laisse donc tourner tant que le solveur
+    progresse, et on s'arrête après « patience » secondes sans la moindre amélioration — ou à
+    l'optimum prouvé, qui arrive parfois tout seul.
+    """
+
+    def __init__(self, patience, plafond):
+        self.patience, self.plafond = patience, plafond
+        self.debut = self.derniere_amelioration = time.monotonic()
+        self.meilleur = None
+        self.paliers = []
+
+    def solution_trouvee(self, valeur):
+        if self.meilleur is None or valeur > self.meilleur:
+            self.meilleur = valeur
+            self.derniere_amelioration = time.monotonic()
+            self.paliers.append(round(self.derniere_amelioration - self.debut, 1))
+
+    def doit_arreter(self):
+        maintenant = time.monotonic()
+        return (maintenant - self.derniere_amelioration > self.patience
+                or maintenant - self.debut > self.plafond)
+
+    @property
+    def duree(self):
+        return round(time.monotonic() - self.debut, 1)
+
+
+def resoudre(probleme, exigence="standard", journal=None, secondes=None):
     """
     Retourne un dictionnaire de résultat : affectations, couverture par élève, service par AESH,
     créneaux non couverts avec leur cause, et l'état du solveur.
@@ -166,9 +223,12 @@ def resoudre(probleme, secondes=20, journal=None):
     x, sans_aesh_dispo = {}, []
     for cle_bloc, bloc in blocs.items():
         creneaux = [(jour, creneau) for _, jour, creneau in bloc["cles"]]
+        famille = probleme.famille_de(bloc["cours"]["matiere"])
         possible = False
         for aesh in probleme.aesh:
             if probleme.ponderation(aesh["id"], bloc["eleve"]) <= -2:        # H8 : interdiction
+                continue
+            if probleme.refuse_matiere(aesh["id"], famille):                 # H13 : matière refusée
                 continue
             if not all(c in aesh["dispo"] for c in creneaux):                # H1 sur le cours entier
                 continue
@@ -315,6 +375,18 @@ def resoudre(probleme, secondes=20, journal=None):
         else:
             hors_equite.append((eleve["id"], "aucune heure notifiée chiffrée"))
 
+    # ── H14 : cours à couvrir impérativement. Une épreuve de CCF ne souffre pas l'à-peu-près :
+    # si l'élève y a droit à un accompagnement, il l'a, quitte à ce que le reste se serre.
+    obligatoires_impossibles = []
+    for cle_bloc in blocs:
+        if f"{cle_bloc[0]}|{cle_bloc[1]}|{cle_bloc[2]}" not in probleme.cours_obligatoires:
+            continue
+        candidats = par_bloc.get(cle_bloc, [])
+        if candidats:
+            modele.AddBoolOr(candidats)
+        else:
+            obligatoires_impossibles.append(cle_bloc)
+
     # ── H9b : cours confiés à la main depuis l'écran des résultats. Ce n'est pas une suggestion :
     # le calcul doit s'y plier et réarranger le reste, ou déclarer que c'est impossible.
     for cle_cours, id_aesh in probleme.cours_imposes.items():
@@ -384,12 +456,34 @@ def resoudre(probleme, secondes=20, journal=None):
     termes.append(poids["equite"] * taux_minimal)
     modele.Maximize(sum(termes))
 
+    reglage = EXIGENCES.get(exigence, EXIGENCES["standard"])
+    if secondes:                                   # compatibilité : un temps imposé reste possible
+        reglage = {"patience": secondes, "plafond": secondes, "libelle": f"{secondes} s"}
+    suivi = _Progression(reglage["patience"], reglage["plafond"])
+
+    class _Rapporteur(cp_model.CpSolverSolutionCallback):
+        def on_solution_callback(self):
+            suivi.solution_trouvee(self.ObjectiveValue())
+
     solveur = cp_model.CpSolver()
-    solveur.parameters.max_time_in_seconds = float(secondes)
+    solveur.parameters.max_time_in_seconds = float(reglage["plafond"])
     solveur.parameters.num_search_workers = 8
-    statut = solveur.Solve(modele)
+    # Le solveur ne prévient pas quand il stagne : il n'appelle le rapporteur que sur une nouvelle
+    # solution. C'est donc un fil de surveillance qui décide de l'arrêt.
+    fini = threading.Event()
+
+    def surveiller():
+        while not fini.wait(0.5):
+            if suivi.doit_arreter():
+                solveur.StopSearch()
+                return
+
+    veilleur = threading.Thread(target=surveiller, daemon=True)
+    veilleur.start()
+    statut = solveur.Solve(modele, _Rapporteur())
+    fini.set()
     nom_statut = solveur.StatusName(statut)
-    dire(f"solveur : {nom_statut} en {solveur.WallTime():.1f} s")
+    dire(f"solveur : {nom_statut} en {suivi.duree} s, {len(suivi.paliers)} amélioration(s)")
     if statut not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return {"statut": nom_statut, "message":
                 "Aucune solution ne respecte toutes les règles dures. Desserrez une interdiction, une "
@@ -411,8 +505,22 @@ def resoudre(probleme, secondes=20, journal=None):
                 "salle": cours.get("salle", ""), "classe": cours.get("classe", ""),
                 "id_cours": cours["id_cours"],
             })
-    return _resultat(probleme, affectations, besoin, hors_equite, nom_statut,
-                     sans_aesh_dispo, creneaux_eleve, par_id_eleve, par_id_aesh)
+    resultat = _resultat(probleme, affectations, besoin, hors_equite, nom_statut,
+                         sans_aesh_dispo, creneaux_eleve, par_id_eleve, par_id_aesh)
+    resultat["recherche"] = {
+        "exigence": reglage.get("libelle", exigence), "duree": suivi.duree,
+        "ameliorations": len(suivi.paliers), "paliers": suivi.paliers[-8:],
+        "optimal": nom_statut == "OPTIMAL",
+        "arret": ("optimum atteint" if nom_statut == "OPTIMAL"
+                  else "plus d'amélioration" if suivi.duree < reglage["plafond"] - 1
+                  else "temps maximal atteint"),
+    }
+    if obligatoires_impossibles:
+        resultat["synthese"]["ccf_impossibles"] = [
+            {"eleve": par_id_eleve[c[0]]["nom_complet"],
+             "matiere": blocs[c]["cours"]["matiere"], "parite": c[1]}
+            for c in obligatoires_impossibles]
+    return resultat
 
 
 def _resultat(probleme, affectations, besoin, hors_equite, nom_statut,

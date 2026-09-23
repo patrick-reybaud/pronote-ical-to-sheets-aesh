@@ -158,7 +158,12 @@ La colonne **Notifié** est modifiable : c'est le recours quand le fichier PIAL 
 zéro alors que l'élève a bien des droits.
 
 ### 6 · AESH & affinités
-Même principe, côté accompagnants : de 1 à 5, l'aisance dans chaque famille de matières.
+Même principe, côté accompagnants : de 1 à 5, l'aisance dans chaque famille de matières. **0 est un
+refus** : l'accompagnant ne sera jamais placé sur cette matière, quelles que soient les circonstances.
+
+Un bloc **Élèves confiés à cet AESH** permet d'imposer, privilégier, éviter ou interdire chaque
+binôme — utile lorsqu'un élève a l'habitude d'être accompagné par la même personne. Ce sont les
+mêmes réglages que le tableau croisé de l'écran « Pondérations ».
 
 Les **disponibilités** se renseignent de deux façons :
 
@@ -181,6 +186,23 @@ qui peut très bien être accompagné avec un camarade du même cours (« mutual
 Le second liste les **couples d'élèves qui partagent réellement des cours**, avec le volume horaire
 en commun — c'est là que se voient les gains possibles. Chaque couple peut être marqué
 « incompatibles » (deux élèves qu'on ne peut pas regrouper) ou « à regrouper » (à privilégier).
+
+### 6 ter · Stages, journées d'intégration & CCF
+**ProNote n'exporte rien de tout cela.** Les seules catégories présentes dans un export sont les
+cours, les vacances et les jours fériés : ni stage, ni PFMP, ni CCF, ni journée d'intégration. Ces
+périodes sont donc déclarées ici — nom, type, dates, élèves concernés.
+
+Pendant un **stage** ou une **journée d'intégration**, les élèves concernés ne sont pas accompagnés,
+et leurs AESH sont **redistribués sur les autres élèves** : chaque période reçoit sa propre
+affectation, calculée sur le calendrier réel de la période et non sur les semaines types.
+
+Un **CCF** fonctionne à l'inverse : les élèves concernés doivent être accompagnés sur toute la durée
+de l'épreuve. C'est une règle dure ; si elle ne peut pas être tenue, le calcul le dit au lieu de
+l'ignorer.
+
+Chaque période se calcule séparément, et son résultat apparaît **sous l'emploi du temps de chaque
+AESH** dans l'export. Si des élèves n'ont aucun cours sur les semaines de la période, l'application
+le signale : c'est souvent le signe que l'export ProNote ne couvre pas ces semaines-là.
 
 ### 7 · Pondérations & règles
 L'écran montre **toutes les règles**.
@@ -213,10 +235,14 @@ Le **tableau croisé élèves ✕ AESH** permet d'agir binôme par binôme : `in
 `imposer` garantit au moins un créneau ensemble, `favoriser` et `éviter` pèsent sans contraindre.
 
 ### 8 · Calcul
-Le calcul explore les combinaisons et retient la meilleure selon les règles. Il s'arrête au temps
-imparti en rendant la meilleure solution trouvée : allonger le temps améliore la qualité, **sans
-jamais violer une règle dure**. 30 secondes suffisent pour travailler, 5 minutes pour un résultat
-final.
+Le calcul cherche la meilleure combinaison et **s'arrête quand il n'améliore plus** — pas au bout
+d'un temps fixé d'avance, qui ne voudrait rien dire pour vous. Trois niveaux d'exigence règlent
+seulement la patience : combien de temps sans le moindre progrès avant de considérer que le calcul a
+donné ce qu'il avait.
+
+Le résultat indique combien d'améliorations ont été trouvées et pourquoi la recherche s'est arrêtée
+— optimum atteint, plus d'amélioration, ou temps maximal. Une solution rendue respecte **toujours**
+toutes les règles dures ; chercher plus longtemps ne fait qu'affiner la qualité.
 
 ### 9 · Emplois du temps
 Chaque élève a **sa couleur**, rappelée en légende ; un créneau partagé par deux élèves apparaît en
@@ -237,6 +263,10 @@ autour, ou le calcul annonce que c'est impossible. Filtrez par élève, ou n'aff
 pour lesquels un AESH est libre — ceux qui se permutent sans rien déranger.
 
 #### Le bilan
+
+Trois exports : les **emplois du temps des AESH** en `.xlsx` et en `.html` imprimable, colorés par
+élève ; et les **emplois du temps des élèves** en `.html`, colorés cette fois **par accompagnant**,
+les cours sans accompagnement restant en gris. Chacun porte sa légende.
 
 Couverture globale, taux de l'élève le moins bien servi, bilan par élève et par AESH, et surtout
 **les heures non couvertes avec leur cause** : aucun AESH disponible sur le créneau, quotités

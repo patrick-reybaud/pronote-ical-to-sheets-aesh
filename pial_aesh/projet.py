@@ -23,7 +23,7 @@ import sys
 import zipfile
 from collections import Counter, defaultdict
 from itertools import combinations
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import pronote as P
@@ -84,6 +84,8 @@ class Projet:
             "max_aesh_par_eleve": 3,
             "pause": {"debut": 11, "fin": 14, "minutes": 60},
             "cours_imposes": {},
+            "periodes": [],           # stages, journées d'intégration, CCF
+            "resultats_periodes": {},  # affectation propre à chaque période
             "poids": dict(POIDS_DEFAUT), "efforts": {}, "affinites": {}, "paires": {},
             "corrections_matieres": {}, "aesh_desactives": [], "dispos": {}, "resultat": None,
             "heures_eleves": {},      # corrections manuelles des heures notifiées
@@ -491,9 +493,148 @@ class Projet:
             })
         return sortie
 
+    # ───────────────────────────── Périodes particulières ─────────────────────────────
+    #
+    # Ni les stages, ni les journées d'intégration, ni les CCF ne figurent dans l'export ProNote :
+    # les catégories exportées se limitent aux cours, aux vacances et aux jours fériés. Ces périodes
+    # sont donc déclarées par la coordination, qui seule les connaît.
+    #
+    #   · stage / intégration : les élèves concernés ne sont pas accompagnés ; leurs AESH sont
+    #     redistribués sur les autres élèves, ce qui donne une affectation propre à la période ;
+    #   · CCF : les élèves concernés doivent être accompagnés sur toute la durée de l'épreuve.
+
+    TYPES_PERIODE = {"stage": "Stage / PFMP", "integration": "Journée d'intégration",
+                     "ccf": "CCF — accompagnement obligatoire", "autre": "Autre absence"}
+
+    def periodes(self):
+        return list(self.etat.get("periodes") or [])
+
+    def periode(self, identifiant):
+        return next((p for p in self.periodes() if p["id"] == identifiant), None)
+
+    def semaines_de(self, periode):
+        """Numéros de semaines ISO couverts par une période déclarée."""
+        try:
+            debut = date.fromisoformat(periode["debut"])
+            fin = date.fromisoformat(periode["fin"])
+        except (KeyError, ValueError):
+            return []
+        semaines, jour = [], debut
+        while jour <= fin:
+            numero = jour.isocalendar()[1]
+            if numero not in semaines:
+                semaines.append(numero)
+            jour += timedelta(days=7)
+        fin_numero = fin.isocalendar()[1]
+        if fin_numero not in semaines:
+            semaines.append(fin_numero)
+        return semaines
+
+    def grilles_periode(self, periode, population=None):
+        """
+        Emplois du temps des élèves **pendant** une période donnée, et non sur les semaines types.
+
+        Une période a son propre calendrier : c'est lui qui fait foi. On reprend au plus deux de ses
+        semaines pour garder la lecture « sem. A / sem. B », l'alternance restant alignée sur celle
+        de l'établissement par la parité du numéro de semaine.
+        """
+        population = population or self.population()
+        semaines = self.semaines_de(periode)
+        if not semaines:
+            return {}, [], []
+        reference = self.etat.get("semaines_types") or semaines[:1]
+        parite_a = reference[0] % 2
+        retenues = sorted(semaines, key=lambda s: (s % 2 != parite_a, s))[:2] or semaines[:1]
+        retenues = sorted(retenues, key=lambda s: s % 2 != parite_a)
+
+        h_min, h_max = self.etat.get("plage") or PLAGE_DEFAUT
+        absents = set(periode.get("eleves") or []) if periode.get("type") in ("stage", "integration", "autre") else set()
+        exclues = set(self.etat.get("matieres_exclues") or [])
+        efforts = self.etat.get("efforts") or {}
+        referentiel = self.referentiel
+        grilles, sans_cours = {}, []
+        for eleve in population["eleves"]:
+            if eleve["id"] in absents:
+                continue
+            cours = population["cours"].get(eleve["id"])
+            if not cours:
+                continue
+            grille, _, _ = P.grille_type(cours, retenues, h_min, h_max)
+            creneaux = {}
+            for (jour, s), case in grille.items():
+                for parite in ("A", "B"):
+                    if not case[parite]:
+                        continue
+                    famille = referentiel.famille(case[parite][0]["matiere"])
+                    if famille in exclues or efforts.get(eleve["id"], {}).get(famille) == 0:
+                        continue
+                    creneaux[(parite, jour, s)] = case[parite][0]
+            if creneaux:
+                grilles[eleve["id"]] = creneaux
+            else:
+                sans_cours.append(eleve["nom_complet"])
+        return grilles, retenues, sans_cours
+
+    def cours_obligatoires(self, periode=None, grilles=None):
+        """Cours à couvrir impérativement : ceux des élèves en CCF pendant la période concernée."""
+        if not periode or periode.get("type") != "ccf":
+            return set()
+        concernes = set(periode.get("eleves") or [])
+        obligatoires = set()
+        for id_eleve, creneaux in (grilles or {}).items():
+            if id_eleve not in concernes:
+                continue
+            for (parite, _, _), cours in creneaux.items():
+                obligatoires.add(f"{id_eleve}|{parite}|{cours['id_cours']}")
+        return obligatoires
+
+    def calculer_periode(self, identifiant, exigence="standard", journal=None):
+        """Affectation propre à une période : redistribution des AESH libérés, CCF garantis."""
+        periode = self.periode(identifiant)
+        if not periode:
+            raise ValueError("Période inconnue.")
+        population = self.population()
+        grilles, semaines, sans_cours = self.grilles_periode(periode, population)
+        if not grilles:
+            return {"statut": "SANS_DONNEES",
+                    "message": "Aucun élève n'a cours pendant cette période — rien à affecter.",
+                    "affectations": [], "eleves": [], "aesh": [], "non_couverts": [], "synthese": {}}
+
+        desactives = set(self.etat.get("aesh_desactives", []))
+        eleves = [{**e, "creneaux": grilles[e["id"]]} for e in population["eleves"] if e["id"] in grilles]
+        aesh = [{**a, "dispo": self.disponibilites(a["id"])} for a in population["aesh"]
+                if a["id"] not in desactives and self.disponibilites(a["id"])]
+        if not aesh:
+            return {"statut": "SANS_DISPONIBILITES",
+                    "message": "Aucun AESH n'a de disponibilité déclarée.",
+                    "affectations": [], "eleves": [], "aesh": [], "non_couverts": [], "synthese": {}}
+
+        resultat = resoudre(Probleme(
+            eleves, aesh, self.etat.get("efforts"), self.etat.get("affinites"),
+            self.etat.get("paires"), self.referentiel.famille,
+            poids=self.etat.get("poids"), max_mutualise=self.etat.get("max_mutualise", 2),
+            mutualisation=self.etat.get("mutualisation"),
+            paires_eleves=self.etat.get("paires_eleves"),
+            max_aesh_par_eleve=self.etat.get("max_aesh_par_eleve", 3),
+            pause=self.etat.get("pause"), h_min=(self.etat.get("plage") or PLAGE_DEFAUT)[0],
+            cours_obligatoires=self.cours_obligatoires(periode, grilles)),
+            exigence=exigence, journal=journal)
+        resultat["calcule_le"] = maintenant()
+        resultat["periode"] = {
+            **periode, "semaines": semaines,
+            "absents": [e["nom_complet"] for e in population["eleves"]
+                        if e["id"] in set(periode.get("eleves") or [])
+                        and periode.get("type") != "ccf"],
+            # Un élève peut n'avoir aucun cours sur ces semaines simplement parce que son export
+            # ProNote ne les couvre pas : il faut le distinguer d'une absence réelle.
+            "sans_emploi_du_temps": sans_cours}
+        self.etat.setdefault("resultats_periodes", {})[identifiant] = resultat
+        self.enregistrer()
+        return resultat
+
     # ───────────────────────────── Calcul ─────────────────────────────
 
-    def calculer(self, secondes=30, journal=None):
+    def calculer(self, exigence="standard", journal=None):
         population = self.population()
         grilles, _, _ = self.grilles(population)
         if not grilles:
@@ -529,7 +670,8 @@ class Projet:
             paires_eleves=self.etat.get("paires_eleves"),
             max_aesh_par_eleve=self.etat.get("max_aesh_par_eleve", 3),
             pause=self.etat.get("pause"), cours_imposes=self.etat.get("cours_imposes"),
-            h_min=(self.etat.get("plage") or PLAGE_DEFAUT)[0]), secondes=secondes, journal=journal)
+            h_min=(self.etat.get("plage") or PLAGE_DEFAUT)[0],
+            cours_obligatoires=self.cours_obligatoires()), exigence=exigence, journal=journal)
         resultat["calcule_le"] = maintenant()
         self.etat["resultat"] = resultat
         self.enregistrer()

@@ -21,8 +21,10 @@ from flask import Flask, jsonify, request, send_from_directory
 from . import export
 from .affectation import POIDS_DEFAUT, REGLES_DURES, REGLES_SOUPLES
 from .matieres import EFFORTS_PAR_DEFAUT, FAMILLES, NON_CLASSE
-from .projet import (DOSSIER_PROJETS, exporter_projet, importer_projet, lister_projets,
-                     ouvrir_dans_explorateur, ouvrir_projet, supprimer_projet)
+from .affectation import EXIGENCES
+from .projet import (DOSSIER_PROJETS, Projet, exporter_projet, importer_projet,
+                     lister_projets, ouvrir_dans_explorateur, ouvrir_projet,
+                     supprimer_projet)
 from .pronote import JOURS, PAS_MINUTES
 
 RACINE_STATIQUE = Path(__file__).resolve().parent / "static"
@@ -211,6 +213,7 @@ def api_etat():
     if _courant["projet"] is None:
         return jsonify({"ouvert": False, "familles": FAMILLES, "jours": JOURS,
                         "pas_minutes": PAS_MINUTES, "poids_defaut": POIDS_DEFAUT, "efforts_defaut": EFFORTS_PAR_DEFAUT,
+                        "exigences": EXIGENCES, "types_periode": Projet.TYPES_PERIODE,
                         "regles_dures": REGLES_DURES, "regles_souples": REGLES_SOUPLES})
     projet = _courant["projet"]
     index, ignores = projet.index_ics()
@@ -223,6 +226,7 @@ def api_etat():
         "ouvert": True, "nom": projet.etat["nom"], "dossier": str(projet.dossier),
         "etat": projet.etat, "familles": FAMILLES, "jours": JOURS, "pas_minutes": PAS_MINUTES,
         "poids_defaut": POIDS_DEFAUT, "efforts_defaut": EFFORTS_PAR_DEFAUT,
+        "exigences": EXIGENCES, "types_periode": Projet.TYPES_PERIODE,
         "regles_dures": REGLES_DURES, "regles_souples": REGLES_SOUPLES,
         "pial": {"charge": bool(donnees),
                  "fichier": Path(projet.etat["fichier_pial"]).name if projet.etat.get("fichier_pial") else None,
@@ -469,9 +473,49 @@ def api_definir_dispos(id_aesh):
 @application.post("/api/calculer")
 def api_calculer():
     projet = projet_courant()
-    secondes = int((request.json or {}).get("secondes", 30))
-    resultat = projet.calculer(secondes=max(5, min(secondes, 300)))
-    return jsonify(resultat)
+    exigence = (request.json or {}).get("exigence", "standard")
+    return jsonify(projet.calculer(exigence=exigence))
+
+
+@application.get("/api/periodes")
+def api_periodes():
+    """Périodes déclarées (stages, journées d'intégration, CCF) et leur affectation propre."""
+    projet = projet_courant()
+    population = projet.population()
+    resultats = projet.etat.get("resultats_periodes") or {}
+    periodes = []
+    for periode in projet.periodes():
+        resultat = resultats.get(periode["id"]) or {}
+        periodes.append({**periode, "semaines": projet.semaines_de(periode),
+                         "calcule": bool(resultat.get("affectations")),
+                         "synthese": resultat.get("synthese") or {}})
+    return jsonify({"periodes": periodes, "types": Projet.TYPES_PERIODE,
+                    "eleves": [{"id": e["id"], "nom": e["nom_complet"], "type_aide": e["type_aide"]}
+                               for e in population["eleves"]]})
+
+
+@application.post("/api/periodes")
+def api_enregistrer_periodes():
+    projet = projet_courant()
+    periodes = (request.json or {}).get("periodes")
+    if periodes is None:
+        raise Erreur("Aucune période transmise.")
+    connus = {p["id"] for p in periodes if p.get("id")}
+    projet.etat["periodes"] = periodes
+    projet.etat["resultats_periodes"] = {k: v for k, v in (projet.etat.get("resultats_periodes") or {}).items()
+                                         if k in connus}
+    projet.enregistrer()
+    return jsonify({"ok": True})
+
+
+@application.post("/api/periodes/<identifiant>/calculer")
+def api_calculer_periode(identifiant):
+    projet = projet_courant()
+    exigence = (request.json or {}).get("exigence", "standard")
+    try:
+        return jsonify(projet.calculer_periode(identifiant, exigence=exigence))
+    except ValueError as e:
+        raise Erreur(str(e))
 
 
 @application.get("/api/resultat")
@@ -515,6 +559,8 @@ def api_export(format):
         chemin = export.emplois_du_temps_html(projet, resultat)
     elif format == "xlsx":
         chemin = export.emplois_du_temps_xlsx(projet, resultat)
+    elif format == "eleves":
+        chemin = export.emplois_du_temps_eleves(projet, resultat)
     elif format == "recueil":
         chemin = export.classeur_recueil(projet)
     else:
