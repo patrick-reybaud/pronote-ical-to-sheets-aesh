@@ -81,7 +81,10 @@ def statique(fichier):
 
 @application.get("/api/projets")
 def api_projets():
-    return jsonify({"projets": lister_projets(), "dossier": str(DOSSIER_PROJETS)})
+    from .projet import CORBEILLE
+    corbeille = DOSSIER_PROJETS / CORBEILLE
+    return jsonify({"projets": lister_projets(), "dossier": str(DOSSIER_PROJETS),
+                    "corbeille": len(list(corbeille.iterdir())) if corbeille.is_dir() else 0})
 
 
 @application.post("/api/projets")
@@ -194,12 +197,13 @@ def api_ouvrir_dossier():
 @application.delete("/api/projets/<nom>")
 def api_supprimer_projet(nom):
     try:
-        supprimer_projet(nom)
+        destination = supprimer_projet(nom)
     except ValueError as e:
         raise Erreur(str(e))
     if _courant["projet"] is not None and _courant["projet"].dossier.name == nom:
         _courant["projet"] = None
-    return jsonify({"ok": True})
+    journal.info("projet « %s » déplacé dans la corbeille : %s", nom, destination)
+    return jsonify({"ok": True, "corbeille": str(destination)})
 
 
 @application.get("/api/etat")

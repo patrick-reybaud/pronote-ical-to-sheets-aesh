@@ -58,8 +58,13 @@ class Projet:
         self.dossier.mkdir(parents=True, exist_ok=True)
         (self.dossier / "sources").mkdir(exist_ok=True)
         self.chemin = self.dossier / "projet.json"
+        neuf = not self.chemin.exists()
         self.etat = self._charger()
         self._cache_ics = {}
+        if neuf:
+            # Un projet créé mais jamais modifié n'existait que dans la mémoire du serveur : il
+            # n'apparaissait pas dans la liste et ne pouvait pas être supprimé. On l'inscrit tout de suite.
+            self.enregistrer()
 
     # ───────────────────────────── Persistance ─────────────────────────────
 
@@ -744,17 +749,28 @@ def ouvrir_dans_explorateur(nom=None):
     return cible
 
 
+CORBEILLE = ".corbeille"
+
+
 def supprimer_projet(nom):
     """
-    Supprime définitivement un projet et tout ce qu'il contient.
+    Retire un projet de la liste, en le déplaçant dans une corbeille au lieu de l'effacer.
+
+    Un projet représente des heures de travail et des fichiers qu'on n'a pas toujours ailleurs.
+    Une suppression définitive et immédiate est une mauvaise idée : le dossier part dans
+    « .corbeille », horodaté, d'où il peut être ressorti à la main. Retourne l'emplacement.
 
     On n'accepte qu'un nom de projet existant, résolu sous DOSSIER_PROJETS : impossible de faire
     sortir la suppression de ce dossier, même avec un nom fabriqué.
     """
-    cible = (DOSSIER_PROJETS / nom).resolve()
+    cible = (DOSSIER_PROJETS / nom_de_dossier(nom)).resolve()
     if cible.parent != DOSSIER_PROJETS.resolve() or not (cible / "projet.json").exists():
         raise ValueError(f"Projet introuvable : {nom}")
-    shutil.rmtree(cible)
+    corbeille = DOSSIER_PROJETS / CORBEILLE
+    corbeille.mkdir(parents=True, exist_ok=True)
+    destination = corbeille / f"{cible.name}_{datetime.now():%Y%m%d_%H%M%S}"
+    shutil.move(str(cible), str(destination))
+    return destination
 
 
 def resume_projet(nom):

@@ -88,7 +88,8 @@ Copier le dossier du projet à la main fonctionne tout aussi bien.
 Créer un projet par établissement et par année, par exemple `Calanques-2 2026-2027`.
 La liste des projets existants indique pour chacun ce qu'il contient — fichier PIAL, nombre
 d'emplois du temps, semaines types, AESH renseignés, dernier calcul — et permet de l'ouvrir ou de le
-**supprimer définitivement** (avec confirmation : les fichiers importés et les sorties sont effacés).
+le **retirer** : il n'est pas effacé mais déplacé, horodaté, dans le sous-dossier `.corbeille` de
+`PIAL-AESH`, d'où vous pouvez le ressortir à la main.
 
 ### 2 · Import des données
 Deux dépôts, par glisser-déposer ou en cliquant :
@@ -271,6 +272,7 @@ l'export montre l'écart, c'est-à-dire ce que la mutualisation fait gagner.
 | Le calcul ne progresse plus | Normal : il rend la meilleure solution trouvée. Allonger le temps si besoin. |
 | Le port 8765 est occupé | L'application en prend un autre et l'affiche au démarrage. |
 | L'import d'un dossier d'exports s'interrompt | Redéposez simplement le dossier : les fichiers déjà importés ne sont pas repris en double, l'import poursuit là où il s'était arrêté. Le détail est dans `PIAL-AESH/journal.log`. |
+| « Load failed » pendant un import | Le navigateur avait invalidé les fichiers déposés. Corrigé depuis la version 1.4.2 : le contenu est lu dès le dépôt. Mettez l'application à jour. |
 
 ---
 

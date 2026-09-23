@@ -174,8 +174,14 @@ function brancherDepot(id, url, apresEnvoi) {
   // deux fois, puis découpé en deux, avant d'abandonner : un envoi qui échoue ponctuellement ne doit
   // pas faire perdre tout l'import. L'état de l'application n'est rafraîchi qu'à la fin.
   const TAILLE_LOT = 40, ESSAIS = 3;
-  const envoyer = async fichiers => {
-    if (!fichiers.length) return;
+  const envoyer = async fichiersBruts => {
+    if (!fichiersBruts.length) return;
+    let fichiers;
+    try {
+      fichiers = await materialiser(fichiersBruts, (fait, total) => retour.innerHTML = message("info",
+        `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span>
+         Lecture des fichiers : <b>${fait} / ${total}</b>`));
+    } catch (e) { retour.innerHTML = erreurAffichee(e); return; }
     const debut = Date.now();
     const cumul = {recus: 0, indexes: 0, nb_ignores: 0, ignores: [], remplaces: 0, conserves: 0};
     let dernier = null;
@@ -249,20 +255,46 @@ async function parcourir(entree, sortie) {
     // dossier glissé-déposé, webkitRelativePath restant vide dans ce cas.
     try { f._chemin = (entree.fullPath || "").replace(/^\//, "") || f.name; } catch { f._chemin = f.name; }
     sortie.push(f); r();
-  }));
+  }, () => r()));
   const lecteur = entree.createReader();
   while (true) {
-    const lot = await new Promise(r => lecteur.readEntries(r));
+    const lot = await new Promise(r => lecteur.readEntries(r, () => r([])));
     if (!lot.length) break;
     for (const e of lot) await parcourir(e, sortie);
   }
 }
 
-/* ───────────────────────── Écrans ───────────────────────── */
+/*
+ * Les fichiers issus d'un glisser-déposer ne restent lisibles qu'un temps : passé quelques
+ * aller-retours réseau, le navigateur invalide les références et la lecture échoue — « Load failed »
+ * dans Safari, une interruption silencieuse ailleurs. C'était la cause des imports qui s'arrêtaient
+ * à 450, 600 ou 1200 fichiers : un point d'arrêt variable parce qu'il dépend du temps écoulé, pas
+ * du contenu. On recopie donc tout en mémoire avant le premier envoi.
+ */
+async function materialiser(fichiers, avancement) {
+  const prets = [];
+  for (let i = 0; i < fichiers.length; i++) {
+    const f = fichiers[i];
+    try {
+      const contenu = await f.arrayBuffer();
+      const copie = new File([contenu], f.name, {type: f.type});
+      copie._chemin = f._chemin || f.webkitRelativePath || f.name;
+      prets.push(copie);
+    } catch (e) {
+      throw new Error(`Le fichier « ${f.name} » n'a pas pu être lu (${e.message}). `
+        + "Si vous avez glissé un dossier, réessayez en le sélectionnant par le bouton, "
+        + "ou déposez plutôt l'archive .zip.");
+    }
+    if (avancement && (i % 25 === 0 || i === fichiers.length - 1)) avancement(i + 1, fichiers.length);
+  }
+  return prets;
+}
+
+/* ───────────────────────── Écrans ───────────────────────── *//* ───────────────────────── Écrans ───────────────────────── */
 const ECRANS = {};
 
 ECRANS.projet = async () => {
-  const {projets, dossier} = await api("/api/projets");
+  const {projets, dossier, corbeille} = await api("/api/projets");
   const detail = p => {
     const bouts = [];
     if (p.pial) bouts.push(`PIAL : ${ech(p.pial)}`);
@@ -351,11 +383,13 @@ ECRANS.projet = async () => {
   });
   document.querySelectorAll(".supprimer").forEach(b => b.onclick = async () => {
     const nom = b.dataset.n;
-    if (!confirm(`Supprimer définitivement le projet « ${nom} » ?\n\n`
-        + "Les fichiers importés, les saisies et les emplois du temps produits seront effacés. "
-        + "Cette action est irréversible.")) return;
-    try { await api("/api/projets/" + encodeURIComponent(nom), {method:"DELETE"});
+    if (!confirm(`Retirer le projet « ${nom} » de la liste ?\n\n`
+        + "Il est déplacé dans le dossier « .corbeille » de PIAL-AESH, horodaté : rien n'est effacé, "
+        + "vous pouvez l'en ressortir à la main si besoin.")) return;
+    try { const r = await api("/api/projets/" + encodeURIComponent(nom), {method:"DELETE"});
       await majEtat(); dessiner();
+      setTimeout(() => { const z = $("#retour-projet"); if (z) z.innerHTML = message("info",
+        `Projet retiré. Il reste disponible dans <code>${ech(r.corbeille)}</code>.`); }, 60);
     } catch (e) { $("#retour-projet").innerHTML = erreurAffichee(e); }
   });
 };
@@ -585,12 +619,18 @@ function brancherImportProjet() {
   const zone = $("#depot-projet"), champ = $("input", zone), retour = $("#depot-projet-retour");
   const TAILLE_LOT = 60;
 
-  const traiter = async fichiers => {
-    if (!fichiers.length) return;
+  const traiter = async fichiersBruts => {
+    if (!fichiersBruts.length) return;
     const chemin = f => f._chemin || f.webkitRelativePath || f.name;
-    const archive = fichiers.find(f => /\.zip$/i.test(f.name));
     const dire = t => retour.innerHTML = message("info",
       `<span class="chargement" style="border-color:#2b5a8a;border-top-color:transparent"></span> ${t}`);
+
+    let fichiers;
+    try {
+      fichiers = await materialiser(fichiersBruts,
+        (fait, total) => dire(`Lecture des fichiers : <b>${fait} / ${total}</b>`));
+    } catch (e) { retour.innerHTML = erreurAffichee(e); return; }
+    const archive = fichiers.find(f => /\.zip$/i.test(f.name));
 
     try {
       if (archive) {
